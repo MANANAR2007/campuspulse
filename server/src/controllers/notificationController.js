@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import Notification from '../models/Notification.js';
+import { emitNotificationUpdated } from '../utils/socket.js';
 
 /**
  * GET /api/notifications
@@ -88,6 +89,8 @@ export const markNotificationRead = async (req, res, next) => {
       readAt: null,
     });
 
+    emitNotificationUpdated(req.user._id, { unreadCount, readNotificationId: id });
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -111,6 +114,8 @@ export const markAllNotificationsRead = async (req, res, next) => {
       { recipient: req.user._id, readAt: null },
       { $set: { readAt: now } }
     );
+
+    emitNotificationUpdated(req.user._id, { unreadCount: 0, readAll: true });
 
     res.status(200).json({
       status: 'success',

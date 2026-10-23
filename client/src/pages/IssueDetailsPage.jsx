@@ -28,12 +28,14 @@ import CategoryBadge from '../components/common/CategoryBadge.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import { issuesAPI, commentsAPI } from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocket } from '../context/SocketContext.jsx';
 import { formatRelativeTime } from '../utils/formatters.js';
 
 export default function IssueDetailsPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { socket, joinIssueRoom, leaveIssueRoom } = useSocket();
   const editFileInputRef = useRef(null);
 
   const [issue, setIssue] = useState(null);
@@ -125,6 +127,80 @@ export default function IssueDetailsPage() {
     fetchIssue();
     fetchComments();
   }, [fetchIssue, fetchComments]);
+
+  // Realtime Socket.IO room subscription and event listeners
+  useEffect(() => {
+    if (!id) return;
+
+    // Join room for this specific issue
+    joinIssueRoom(id);
+
+    if (!socket) {
+      return () => {
+        leaveIssueRoom(id);
+      };
+    }
+
+    const handleCommentCreated = ({ issueId, comment }) => {
+      if (issueId === id && comment) {
+        setComments((prev) => {
+          const exists = prev.some((c) => (c.id || c._id) === (comment.id || comment._id));
+          return exists ? prev : [...prev, comment];
+        });
+      }
+    };
+
+    const handleCommentUpdated = ({ issueId, comment }) => {
+      if (issueId === id && comment) {
+        setComments((prev) =>
+          prev.map((c) =>
+            (c.id || c._id) === (comment.id || comment._id) ? comment : c
+          )
+        );
+      }
+    };
+
+    const handleCommentDeleted = ({ issueId, commentId }) => {
+      if (issueId === id && commentId) {
+        setComments((prev) => prev.filter((c) => (c.id || c._id) !== commentId));
+      }
+    };
+
+    const handleConfirmationUpdated = (payload) => {
+      if (payload.issueId === id && typeof payload.confirmationCount === 'number') {
+        setAffectedCount(payload.confirmationCount);
+      }
+    };
+
+    const handleStatusChanged = (payload) => {
+      if (payload.issueId === id && payload.issue) {
+        setIssue((prev) => ({ ...prev, ...payload.issue }));
+      }
+    };
+
+    const handleIssueUpdated = (payload) => {
+      if (payload.issueId === id && payload.issue) {
+        setIssue((prev) => ({ ...prev, ...payload.issue }));
+      }
+    };
+
+    socket.on('comment:created', handleCommentCreated);
+    socket.on('comment:updated', handleCommentUpdated);
+    socket.on('comment:deleted', handleCommentDeleted);
+    socket.on('confirmation:updated', handleConfirmationUpdated);
+    socket.on('issue:statusChanged', handleStatusChanged);
+    socket.on('issue:updated', handleIssueUpdated);
+
+    return () => {
+      leaveIssueRoom(id);
+      socket.off('comment:created', handleCommentCreated);
+      socket.off('comment:updated', handleCommentUpdated);
+      socket.off('comment:deleted', handleCommentDeleted);
+      socket.off('confirmation:updated', handleConfirmationUpdated);
+      socket.off('issue:statusChanged', handleStatusChanged);
+      socket.off('issue:updated', handleIssueUpdated);
+    };
+  }, [id, socket, joinIssueRoom, leaveIssueRoom]);
 
   // Clean up edit preview object URL
   useEffect(() => {

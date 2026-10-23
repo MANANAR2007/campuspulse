@@ -9,6 +9,10 @@ import {
   createNotification,
   fanOutCampusAlertNotification,
 } from '../utils/notificationHelper.js';
+import {
+  emitStatusChanged,
+  emitAlertApproved,
+} from '../utils/socket.js';
 
 /**
  * GET /api/admin/issues
@@ -203,6 +207,12 @@ export const reviewIssue = async (req, res, next) => {
       .populate('createdBy', 'name email department role')
       .populate('reviewedBy', 'name email role');
 
+    // Realtime broadcast of status update and approved alert
+    emitStatusChanged(updatedIssue);
+    if (issue.isCampusWideAlert) {
+      emitAlertApproved(updatedIssue);
+    }
+
     res.status(200).json({
       status: 'success',
       message: `Issue successfully marked as ${issue.status}.`,
@@ -313,6 +323,12 @@ export const updateIssueStatus = async (req, res, next) => {
     const updatedIssue = await Issue.findById(issue._id)
       .populate('createdBy', 'name email department role')
       .populate('reviewedBy', 'name email role');
+
+    // Realtime broadcast of status update and approved alert
+    emitStatusChanged(updatedIssue);
+    if (issue.isCampusWideAlert) {
+      emitAlertApproved(updatedIssue);
+    }
 
     res.status(200).json({
       status: 'success',

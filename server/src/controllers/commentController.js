@@ -2,6 +2,11 @@ import mongoose from 'mongoose';
 import Comment from '../models/Comment.js';
 import Issue from '../models/Issue.js';
 import { createNotification } from '../utils/notificationHelper.js';
+import {
+  emitCommentCreated,
+  emitCommentUpdated,
+  emitCommentDeleted,
+} from '../utils/socket.js';
 
 /**
  * GET /api/issues/:id/comments
@@ -141,6 +146,9 @@ export const createComment = async (req, res, next) => {
       });
     }
 
+    // Realtime broadcast to issue discussion room
+    emitCommentCreated(id, populatedComment);
+
     res.status(201).json({
       status: 'success',
       data: {
@@ -206,6 +214,8 @@ export const updateComment = async (req, res, next) => {
       'name email role department'
     );
 
+    emitCommentUpdated(comment.issue.toString(), updatedComment);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -251,7 +261,10 @@ export const deleteComment = async (req, res, next) => {
       });
     }
 
+    const issueId = comment.issue.toString();
     await Comment.findByIdAndDelete(commentId);
+
+    emitCommentDeleted(issueId, commentId);
 
     res.status(200).json({
       status: 'success',

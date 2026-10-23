@@ -16,8 +16,10 @@ import IssueCard from '../components/issues/IssueCard.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import { issuesAPI } from '../services/api.js';
 import { ISSUE_CATEGORIES } from '../utils/formatters.js';
+import { useSocket } from '../context/SocketContext.jsx';
 
 export default function FeedPage() {
+  const { socket, isConnected } = useSocket();
   const [issues, setIssues] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -114,6 +116,61 @@ export default function FeedPage() {
   useEffect(() => {
     fetchFeed();
   }, [fetchFeed]);
+
+  // Realtime Socket.IO listeners for live feed synchronization
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleIssueCreated = () => {
+      fetchFeed();
+    };
+
+    const handleIssueUpdated = () => {
+      fetchFeed();
+    };
+
+    const handleIssueDeleted = ({ issueId }) => {
+      setIssues((prev) => prev.filter((i) => (i.id || i._id) !== issueId));
+      fetchAlerts();
+    };
+
+    const handleStatusChanged = () => {
+      fetchFeed();
+      fetchAlerts();
+    };
+
+    const handleAlertApproved = () => {
+      fetchAlerts();
+      fetchFeed();
+    };
+
+    const handleConfirmationUpdated = ({ issueId, confirmationCount }) => {
+      setIssues((prev) =>
+        prev.map((i) => {
+          if ((i.id || i._id) === issueId) {
+            return { ...i, confirmationCount };
+          }
+          return i;
+        })
+      );
+    };
+
+    socket.on('issue:created', handleIssueCreated);
+    socket.on('issue:updated', handleIssueUpdated);
+    socket.on('issue:deleted', handleIssueDeleted);
+    socket.on('issue:statusChanged', handleStatusChanged);
+    socket.on('alert:approved', handleAlertApproved);
+    socket.on('confirmation:updated', handleConfirmationUpdated);
+
+    return () => {
+      socket.off('issue:created', handleIssueCreated);
+      socket.off('issue:updated', handleIssueUpdated);
+      socket.off('issue:deleted', handleIssueDeleted);
+      socket.off('issue:statusChanged', handleStatusChanged);
+      socket.off('alert:approved', handleAlertApproved);
+      socket.off('confirmation:updated', handleConfirmationUpdated);
+    };
+  }, [socket, fetchFeed, fetchAlerts]);
 
   const handleFilterChange = (filterId) => {
     setActiveFilter(filterId);

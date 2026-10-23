@@ -19,10 +19,12 @@ import {
 import { notificationsAPI } from '../services/api.js';
 import { formatRelativeTime } from '../utils/formatters.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocket } from '../context/SocketContext.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 
 export default function NotificationsPage() {
   const { refreshNotificationsCount } = useAuth();
+  const { socket } = useSocket();
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [filter, setFilter] = useState('All'); // 'All' | 'Unread'
@@ -53,6 +55,39 @@ export default function NotificationsPage() {
   useEffect(() => {
     fetchNotifications();
   }, [fetchNotifications]);
+
+  // Realtime Socket.IO listeners for new/updated notifications
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleNewNotification = ({ notification }) => {
+      if (notification) {
+        setNotifications((prev) => [notification, ...prev]);
+        setUnreadCount((prev) => prev + 1);
+        refreshNotificationsCount();
+      }
+    };
+
+    const handleNotificationUpdated = (payload) => {
+      if (typeof payload?.unreadCount === 'number') {
+        setUnreadCount(payload.unreadCount);
+      }
+      if (payload?.readAll) {
+        setNotifications((prev) =>
+          prev.map((n) => ({ ...n, readAt: n.readAt || new Date() }))
+        );
+      }
+      refreshNotificationsCount();
+    };
+
+    socket.on('notification:new', handleNewNotification);
+    socket.on('notification:updated', handleNotificationUpdated);
+
+    return () => {
+      socket.off('notification:new', handleNewNotification);
+      socket.off('notification:updated', handleNotificationUpdated);
+    };
+  }, [socket, refreshNotificationsCount]);
 
   const markAsRead = async (id, alreadyRead) => {
     if (alreadyRead) return;

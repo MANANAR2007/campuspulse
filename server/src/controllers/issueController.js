@@ -11,6 +11,12 @@ import {
   deleteFromCloudinary,
   isCloudinaryConfigured,
 } from '../utils/cloudinary.js';
+import {
+  emitIssueCreated,
+  emitIssueUpdated,
+  emitIssueDeleted,
+  emitConfirmationUpdated,
+} from '../utils/socket.js';
 
 /**
  * Batched confirmation metadata helper for feed queries
@@ -235,6 +241,9 @@ export const createIssue = async (req, res, next) => {
     const issueObject = populatedIssue.toObject();
     issueObject.confirmationCount = 0;
     issueObject.currentUserConfirmed = false;
+
+    // Realtime broadcast for new report
+    emitIssueCreated(issueObject);
 
     res.status(201).json({
       status: 'success',
@@ -662,6 +671,9 @@ export const updateIssue = async (req, res, next) => {
     issueObj.confirmationCount = confirmationCount;
     issueObj.currentUserConfirmed = Boolean(userConfirm);
 
+    // Realtime broadcast for updated report
+    emitIssueUpdated(issueObj);
+
     res.status(200).json({
       status: 'success',
       data: {
@@ -726,6 +738,9 @@ export const deleteIssue = async (req, res, next) => {
       IssueConfirmation.deleteMany({ issue: id }),
     ]);
 
+    // Realtime broadcast for deleted issue
+    emitIssueDeleted(id);
+
     res.status(200).json({
       status: 'success',
       message: 'Issue report deleted successfully.',
@@ -780,6 +795,9 @@ export const confirmIssue = async (req, res, next) => {
 
     const confirmationCount = await IssueConfirmation.countDocuments({ issue: id });
 
+    // Realtime broadcast for updated affirmations
+    emitConfirmationUpdated(id, { confirmationCount });
+
     res.status(200).json({
       status: 'success',
       message: 'Issue affirmed successfully.',
@@ -829,6 +847,9 @@ export const unconfirmIssue = async (req, res, next) => {
     });
 
     const confirmationCount = await IssueConfirmation.countDocuments({ issue: id });
+
+    // Realtime broadcast for updated affirmations
+    emitConfirmationUpdated(id, { confirmationCount });
 
     res.status(200).json({
       status: 'success',

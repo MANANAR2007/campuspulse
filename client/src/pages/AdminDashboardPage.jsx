@@ -24,10 +24,12 @@ import CategoryBadge from '../components/common/CategoryBadge.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
 import { adminAPI } from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useSocket } from '../context/SocketContext.jsx';
 import { formatRelativeTime } from '../utils/formatters.js';
 
 export default function AdminDashboardPage() {
   const { user } = useAuth();
+  const { socket } = useSocket();
 
   const [stats, setStats] = useState({
     totalIssues: 0,
@@ -124,6 +126,30 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     fetchIssues();
   }, [fetchIssues]);
+
+  // Realtime Socket.IO listeners for live admin queue and statistics updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleRealtimeChange = () => {
+      fetchStats();
+      fetchIssues();
+    };
+
+    socket.on('issue:created', handleRealtimeChange);
+    socket.on('issue:updated', handleRealtimeChange);
+    socket.on('issue:deleted', handleRealtimeChange);
+    socket.on('issue:statusChanged', handleRealtimeChange);
+    socket.on('alert:approved', handleRealtimeChange);
+
+    return () => {
+      socket.off('issue:created', handleRealtimeChange);
+      socket.off('issue:updated', handleRealtimeChange);
+      socket.off('issue:deleted', handleRealtimeChange);
+      socket.off('issue:statusChanged', handleRealtimeChange);
+      socket.off('alert:approved', handleRealtimeChange);
+    };
+  }, [socket, fetchStats, fetchIssues]);
 
   // Execute Review Decision (Verify / Reject)
   const handleReviewSubmit = async (e) => {

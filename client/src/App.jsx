@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
+import { SocketProvider } from './context/SocketContext.jsx';
 import AppLayout from './components/layout/AppLayout.jsx';
 import ProtectedRoute from './components/auth/ProtectedRoute.jsx';
 import PublicOnlyRoute from './components/auth/PublicOnlyRoute.jsx';
@@ -18,70 +19,72 @@ import NotFoundPage from './pages/NotFoundPage.jsx';
 export default function App() {
   return (
     <AuthProvider>
-      <Routes>
-        <Route path="/" element={<AppLayout />}>
-          {/* Public feeds & details */}
-          <Route index element={<FeedPage />} />
-          <Route path="issues/:id" element={<IssueDetailsPage />} />
+      <SocketProvider>
+        <Routes>
+          <Route path="/" element={<AppLayout />}>
+            {/* Public feeds & details */}
+            <Route index element={<FeedPage />} />
+            <Route path="issues/:id" element={<IssueDetailsPage />} />
 
-          {/* Guest only routes (redirect to / if already logged in) */}
-          <Route
-            path="login"
-            element={
-              <PublicOnlyRoute>
-                <LoginPage />
-              </PublicOnlyRoute>
-            }
-          />
-          <Route
-            path="register"
-            element={
-              <PublicOnlyRoute>
-                <RegisterPage />
-              </PublicOnlyRoute>
-            }
-          />
+            {/* Guest only routes (redirect to / if already logged in) */}
+            <Route
+              path="login"
+              element={
+                <PublicOnlyRoute>
+                  <LoginPage />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="register"
+              element={
+                <PublicOnlyRoute>
+                  <RegisterPage />
+                </PublicOnlyRoute>
+              }
+            />
 
-          {/* Authenticated user routes */}
-          <Route
-            path="issues/new"
-            element={
-              <ProtectedRoute>
-                <NewIssuePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="my-reports"
-            element={
-              <ProtectedRoute>
-                <MyReportsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="notifications"
-            element={
-              <ProtectedRoute>
-                <NotificationsPage />
-              </ProtectedRoute>
-            }
-          />
+            {/* Authenticated user routes */}
+            <Route
+              path="issues/new"
+              element={
+                <ProtectedRoute>
+                  <NewIssuePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="my-reports"
+              element={
+                <ProtectedRoute>
+                  <MyReportsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="notifications"
+              element={
+                <ProtectedRoute>
+                  <NotificationsPage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Admin role protected route */}
-          <Route
-            path="admin"
-            element={
-              <ProtectedRoute adminOnly={true}>
-                <AdminDashboardPage />
-              </ProtectedRoute>
-            }
-          />
+            {/* Admin role protected route */}
+            <Route
+              path="admin"
+              element={
+                <ProtectedRoute adminOnly={true}>
+                  <AdminDashboardPage />
+                </ProtectedRoute>
+              }
+            />
 
-          {/* Fallback 404 handler */}
-          <Route path="*" element={<NotFoundPage />} />
-        </Route>
-      </Routes>
+            {/* Fallback 404 handler */}
+            <Route path="*" element={<NotFoundPage />} />
+          </Route>
+        </Routes>
+      </SocketProvider>
     </AuthProvider>
   );
 }

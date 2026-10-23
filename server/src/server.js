@@ -1,6 +1,8 @@
+import http from 'http';
 import app from './app.js';
 import { config } from './config/index.js';
 import { connectDB } from './config/db.js';
+import { initSocket } from './utils/socket.js';
 
 const { port, host, nodeEnv } = config;
 
@@ -13,9 +15,14 @@ const startServer = async () => {
     console.log('🔄 Connecting to MongoDB Atlas...');
     await connectDB();
 
-    // 2. Start HTTP server
-    const server = app.listen(port, host, () => {
+    // 2. Create HTTP server and initialize authenticated Socket.IO
+    const httpServer = http.createServer(app);
+    initSocket(httpServer);
+
+    // 3. Start listening on configured host and port
+    const server = httpServer.listen(port, host, () => {
       console.log(`🚀 CampusPulse API server running at http://${host}:${port} [${nodeEnv}]`);
+      console.log(`🔌 Socket.IO enabled on path /socket.io`);
       console.log(`🩺 Health check: http://${host}:${port}/api/health`);
     });
 
@@ -27,7 +34,7 @@ const startServer = async () => {
     process.on('SIGINT', async () => {
       console.log('\n🛑 Gracefully shutting down CampusPulse API server...');
       server.close(() => {
-        console.log('HTTP server closed.');
+        console.log('HTTP and Socket.IO server closed.');
         process.exit(0);
       });
     });
