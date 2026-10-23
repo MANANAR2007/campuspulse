@@ -11,7 +11,7 @@ dotenv.config();
 
 export const config = {
   port: parseInt(process.env.PORT, 10) || 5000,
-  host: process.env.HOST || '127.0.0.1',
+  host: process.env.HOST || (process.env.NODE_ENV === 'production' ? '0.0.0.0' : '127.0.0.1'),
   nodeEnv: process.env.NODE_ENV || 'development',
   clientOrigin: process.env.CLIENT_ORIGIN || process.env.CLIENT_URL || 'http://localhost:5173',
   mongodbUri: process.env.MONGODB_URI,
