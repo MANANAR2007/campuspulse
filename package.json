@@ -1,0 +1,18 @@
+{
+  "name": "campuspulse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CampusPulse - Campus issue-reporting and awareness platform",
+  "scripts": {
+    "dev": "concurrently -k -n \"server,client\" -c \"cyan,green\" \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "dev:server": "npm run dev --prefix server",
+    "dev:client": "npm run dev --prefix client",
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "seed:admin": "npm run seed:admin --prefix server",
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
