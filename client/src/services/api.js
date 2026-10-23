@@ -249,6 +249,12 @@ export const adminAPI = {
       method: 'GET',
     }),
 
+  // GET /api/admin/issues/:id
+  getIssueById: (id) =>
+    request(`/admin/issues/${id}`, {
+      method: 'GET',
+    }),
+
   // PATCH /api/admin/issues/:id/review
   reviewIssue: (id, reviewData) =>
     request(`/admin/issues/${id}/review`, {

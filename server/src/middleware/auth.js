@@ -70,7 +70,7 @@ export const requireAdmin = (req, res, next) => {
   if (!req.user) {
     return res.status(401).json({
       status: 'fail',
-      message: 'Authentication required.',
+      message: 'Authentication required. Please sign in.',
     });
   }
 
@@ -78,6 +78,27 @@ export const requireAdmin = (req, res, next) => {
     return res.status(403).json({
       status: 'fail',
       message: 'Access denied. Administrator privileges are required for this action.',
+    });
+  }
+
+  next();
+};
+
+/**
+ * Middleware: Require Student role
+ */
+export const requireStudent = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Authentication required. Please sign in.',
+    });
+  }
+
+  if (req.user.role !== 'student') {
+    return res.status(403).json({
+      status: 'fail',
+      message: 'Access denied. This action is restricted to students.',
     });
   }
 

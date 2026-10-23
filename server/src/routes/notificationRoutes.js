@@ -4,11 +4,11 @@ import {
   markNotificationRead,
   markAllNotificationsRead,
 } from '../controllers/notificationController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireStudent } from '../middleware/auth.js';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticate, requireStudent);
 
 router.get('/', getNotifications);
 router.patch('/read-all', markAllNotificationsRead);

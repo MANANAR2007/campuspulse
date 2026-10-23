@@ -6,7 +6,6 @@ import {
   PlusCircle,
   FileText,
   Bell,
-  ShieldAlert,
   LogIn,
   LogOut,
   UserPlus,
@@ -31,12 +30,6 @@ export default function Sidebar({ isOpen, onClose }) {
     { to: '/issues/new', label: 'Report Issue', icon: PlusCircle },
     { to: '/my-reports', label: 'My Reports', icon: FileText },
     { to: '/notifications', label: 'Notifications', icon: Bell, badge: unreadCount },
-    {
-      to: '/admin',
-      label: 'Admin Operations',
-      icon: ShieldAlert,
-      roleBadge: isAdmin ? 'Admin' : 'Protected',
-    },
   ];
 
   const getInitials = (name) => {

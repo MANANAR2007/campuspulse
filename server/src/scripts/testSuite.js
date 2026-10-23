@@ -171,17 +171,69 @@ async function runTests() {
     adminCookie = extractCookie(adminLoginRes, 'token');
     assert(adminCookie !== null, 'Admin login sets HttpOnly "token" cookie');
 
-    // Student attempting admin endpoint is rejected with 403 Forbidden
+    // Student attempting admin endpoints is rejected with 403 Forbidden
     const forbiddenRes = await fetch(`${BASE_URL}/api/admin/issues`, {
       headers: { Cookie: studentCookie },
     });
     assert(forbiddenRes.status === 403, 'Student accessing GET /api/admin/issues returns HTTP 403 Forbidden');
+
+    const forbiddenStatsRes = await fetch(`${BASE_URL}/api/admin/stats`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert(forbiddenStatsRes.status === 403, 'Student accessing GET /api/admin/stats returns HTTP 403 Forbidden');
+
+    // Admin attempting student-only write operations is rejected with 403 Forbidden
+    const adminCreateIssueRes = await fetch(`${BASE_URL}/api/issues`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        title: 'Admin attempting student report creation',
+        description: 'This must be blocked by requireStudent backend guard.',
+        category: 'infrastructure',
+        severity: 'low',
+        location: { building: 'Admin Block' },
+      }),
+    });
+    const adminCreateIssueData = await adminCreateIssueRes.json();
+    assert(
+      adminCreateIssueRes.status === 403,
+      'Admin attempting POST /api/issues (Student Report) returns HTTP 403 Forbidden'
+    );
+    assert(
+      adminCreateIssueData.message && adminCreateIssueData.message.includes('restricted to students'),
+      'Backend error explains action is restricted to students'
+    );
+
+    const adminConfirmRes = await fetch(`${BASE_URL}/api/issues/6adb17385aa20577b91453cc/confirm`, {
+      method: 'POST',
+      headers: { Cookie: adminCookie },
+    });
+    assert(
+      adminConfirmRes.status === 403,
+      'Admin attempting POST /api/issues/:id/confirm (Affects Me Too) returns HTTP 403 Forbidden'
+    );
+
+    const adminMyReportsRes = await fetch(`${BASE_URL}/api/issues/mine`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert(
+      adminMyReportsRes.status === 403,
+      'Admin attempting GET /api/issues/mine returns HTTP 403 Forbidden'
+    );
 
     // Admin accessing admin endpoint succeeds
     const adminAccessRes = await fetch(`${BASE_URL}/api/admin/issues`, {
       headers: { Cookie: adminCookie },
     });
     assert(adminAccessRes.status === 200, 'Admin accessing GET /api/admin/issues returns HTTP 200');
+
+    const adminStatsRes = await fetch(`${BASE_URL}/api/admin/stats`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert(adminStatsRes.status === 200, 'Admin accessing GET /api/admin/stats returns HTTP 200');
 
     // 5. Socket.IO Authenticated Handshake & Reject Unauthenticated
     console.log(`\n${cyan('6. Verifying Authenticated Socket.IO Handshake...')}`);
@@ -429,6 +481,28 @@ async function runTests() {
       'Realtime "alert:approved" event broadcast across campus'
     );
 
+    // Verify Admin-Only Issue Details API Role Separation
+    const studentAccessAdminDetailRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert(
+      studentAccessAdminDetailRes.status === 403,
+      'Student accessing GET /api/admin/issues/:id returns HTTP 403 Forbidden'
+    );
+
+    const adminAccessDetailRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    const adminAccessDetailData = await adminAccessDetailRes.json();
+    assert(
+      adminAccessDetailRes.status === 200,
+      'Admin accessing GET /api/admin/issues/:id returns HTTP 200'
+    );
+    assert(
+      adminAccessDetailData.data && (adminAccessDetailData.data.issue.id || adminAccessDetailData.data.issue._id) === testIssueId,
+      'Admin issue detail returns full report with populated submitter and reviewer'
+    );
+
     // 10. Database-backed Notification Realtime Delivery
     console.log(`\n${cyan('11. Verifying Author Private Notification Event...')}`);
     const notifRes = await fetch(`${BASE_URL}/api/notifications`, {
@@ -453,13 +527,26 @@ async function runTests() {
     );
     assert(hasApprovedAlert, 'Approved alert is returned in public REST alerts feed');
 
+    // 12. Verifying Session Logout & Cookie Invalidation
+    console.log(`\n${cyan('13. Verifying Session Logout & Cookie Invalidation...')}`);
+    const logoutRes = await fetch(`${BASE_URL}/api/auth/logout`, {
+      method: 'POST',
+      headers: { Cookie: studentCookie },
+    });
+    assert(logoutRes.status === 200, 'POST /api/auth/logout returns HTTP 200');
+    const logoutCookie = logoutRes.headers.get('set-cookie');
+    assert(
+      logoutCookie && (logoutCookie.includes('token=;') || logoutCookie.includes('Max-Age=0') || logoutCookie.includes('Expires=')),
+      'Logout invalidates HttpOnly authentication cookie in Set-Cookie header'
+    );
+
     // Disconnect sockets cleanly
     studentSocket.emit('leave:issue', testIssueId);
     studentSocket.disconnect();
     adminSocket.disconnect();
 
-    // 12. Cleanup
-    console.log(`\n${cyan('13. Cleaning up Test Artifacts...')}`);
+    // 13. Cleanup
+    console.log(`\n${cyan('14. Cleaning up Test Artifacts...')}`);
     if (testIssueId) {
       await Issue.findByIdAndDelete(testIssueId);
       await Comment.deleteMany({ issueId: testIssueId });

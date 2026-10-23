@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   ShieldAlert,
   AlertTriangle,
@@ -62,6 +62,23 @@ export default function AdminDashboardPage() {
     hasPrevPage: false,
   });
 
+  const [searchParams] = useSearchParams();
+  const currentView = searchParams.get('view') || 'overview';
+
+  // React to view changes from Admin Sidebar navigation
+  useEffect(() => {
+    if (currentView === 'queue') {
+      setFilterStatus('reported');
+      setPage(1);
+    } else if (currentView === 'alerts') {
+      setFilterStatus('All');
+      setPage(1);
+    } else {
+      setFilterStatus('All');
+      setPage(1);
+    }
+  }, [currentView]);
+
   // Action modals
   const [reviewModal, setReviewModal] = useState(null); // { issue, decision, approveAlert: false, note: '' }
   const [statusModal, setStatusModal] = useState(null); // { issue, targetStatus: '', note: '' }
@@ -100,6 +117,10 @@ export default function AdminDashboardPage() {
       params.severity = filterSeverity.toLowerCase();
     }
 
+    if (currentView === 'alerts') {
+      params.isCampusWideAlert = true;
+    }
+
     if (searchQuery.trim()) {
       params.search = searchQuery.trim();
     }
@@ -117,7 +138,7 @@ export default function AdminDashboardPage() {
     } finally {
       setIssuesLoading(false);
     }
-  }, [page, filterStatus, filterSeverity, searchQuery]);
+  }, [page, filterStatus, filterSeverity, searchQuery, currentView]);
 
   useEffect(() => {
     fetchStats();
@@ -415,7 +436,7 @@ export default function AdminDashboardPage() {
                     <tr key={issue.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4 max-w-xs">
                         <Link
-                          to={`/issues/${issue.id}`}
+                          to={`/admin/issues/${issue.id}`}
                           className="font-semibold text-slate-900 hover:text-blue-600 block truncate"
                         >
                           {issue.title}
@@ -539,7 +560,7 @@ export default function AdminDashboardPage() {
                         )}
 
                         <Link
-                          to={`/issues/${issue.id}`}
+                          to={`/admin/issues/${issue.id}`}
                           className="px-2 py-1 text-[11px] font-medium text-blue-600 hover:underline"
                         >
                           Details
@@ -605,7 +626,7 @@ export default function AdminDashboardPage() {
                         </button>
                       ) : null}
                       <Link
-                        to={`/issues/${issue.id}`}
+                        to={`/admin/issues/${issue.id}`}
                         className="text-blue-600 font-semibold px-1"
                       >
                         View

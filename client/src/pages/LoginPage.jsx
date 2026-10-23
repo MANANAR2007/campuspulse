@@ -43,14 +43,22 @@ export default function LoginPage() {
 
     setIsSubmitting(true);
     try {
-      await login({
+      const loggedUser = await login({
         email: formData.email.trim(),
         password: formData.password,
       });
 
-      // Redirect to return URL or main feed
-      const returnPath = location.state?.from?.pathname || '/';
-      navigate(returnPath, { replace: true });
+      // Role-based login redirection
+      if (loggedUser && loggedUser.role === 'admin') {
+        navigate('/admin', { replace: true });
+      } else {
+        const returnPath = location.state?.from?.pathname;
+        if (returnPath && !returnPath.startsWith('/admin') && returnPath !== '/login') {
+          navigate(returnPath, { replace: true });
+        } else {
+          navigate('/', { replace: true });
+        }
+      }
     } catch (err) {
       setServerError(err.message || 'Authentication failed. Please verify your credentials.');
     } finally {

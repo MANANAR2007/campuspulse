@@ -4,6 +4,8 @@ import Issue, {
   ISSUE_SEVERITIES,
   ISSUE_STATUSES,
 } from '../models/Issue.js';
+import IssueConfirmation from '../models/IssueConfirmation.js';
+import Comment from '../models/Comment.js';
 import { normalizeCategory } from '../utils/categoryHelper.js';
 import {
   createNotification,
@@ -385,6 +387,55 @@ export const getAdminStats = async (req, res, next) => {
         resolved,
         activeAlerts,
         rejectedIssues: rejected,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/admin/issues/:id
+ * Retrieve full details of an issue for administrative inspection and decision-making
+ */
+export const getAdminIssueById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid issue ID format.',
+      });
+    }
+
+    const issue = await Issue.findById(id)
+      .populate('createdBy', 'name email department role')
+      .populate('reviewedBy', 'name email role');
+
+    if (!issue) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Issue report not found.',
+      });
+    }
+
+    const [confirmationCount, comments] = await Promise.all([
+      IssueConfirmation.countDocuments({ issue: issue._id }),
+      Comment.find({ issue: issue._id })
+        .sort({ createdAt: 1 })
+        .populate('author', 'name email role department'),
+    ]);
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        issue: {
+          ...issue.toObject(),
+          id: issue._id.toString(),
+          confirmationCount,
+        },
+        comments,
       },
     });
   } catch (error) {

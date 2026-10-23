@@ -14,7 +14,7 @@ import {
   getIssueComments,
   createComment,
 } from '../controllers/commentController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requireStudent } from '../middleware/auth.js';
 import { uploadSingleImage } from '../middleware/upload.js';
 
 const router = Router();
@@ -22,25 +22,25 @@ const router = Router();
 // All issue operations require authenticated session
 router.use(authenticate);
 
-// Student issue collection endpoints
-router.post('/', uploadSingleImage, createIssue);
-router.get('/', getIssues);
-router.get('/mine', getMyIssues);
+// Student issue collection endpoints (Student mode only)
+router.post('/', requireStudent, uploadSingleImage, createIssue);
+router.get('/', requireStudent, getIssues);
+router.get('/mine', requireStudent, getMyIssues);
 
 // Alert banner query (must be registered BEFORE /:id)
 router.get('/alerts', getActiveAlerts);
 
-// Nested comments for an issue
-router.get('/:id/comments', getIssueComments);
-router.post('/:id/comments', createComment);
+// Nested comments for an issue (Student mode only)
+router.get('/:id/comments', requireStudent, getIssueComments);
+router.post('/:id/comments', requireStudent, createComment);
 
-// Affects Me Too confirmation endpoints
-router.post('/:id/confirm', confirmIssue);
-router.delete('/:id/confirm', unconfirmIssue);
+// Affects Me Too confirmation endpoints (Student mode only)
+router.post('/:id/confirm', requireStudent, confirmIssue);
+router.delete('/:id/confirm', requireStudent, unconfirmIssue);
 
-// Single issue item endpoints
-router.get('/:id', getIssueById);
-router.patch('/:id', uploadSingleImage, updateIssue);
-router.delete('/:id', deleteIssue);
+// Single issue item endpoints (Student mode only)
+router.get('/:id', requireStudent, getIssueById);
+router.patch('/:id', requireStudent, uploadSingleImage, updateIssue);
+router.delete('/:id', requireStudent, deleteIssue);
 
 export default router;

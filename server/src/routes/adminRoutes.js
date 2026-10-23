@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   getAdminIssues,
+  getAdminIssueById,
   reviewIssue,
   updateIssueStatus,
   getAdminStats,
@@ -14,6 +15,7 @@ router.use(authenticate, requireAdmin);
 
 // Admin review queue & issue management
 router.get('/issues', getAdminIssues);
+router.get('/issues/:id', getAdminIssueById);
 router.patch('/issues/:id/review', reviewIssue);
 router.patch('/issues/:id/status', updateIssueStatus);
 
