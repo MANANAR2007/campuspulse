@@ -11,7 +11,7 @@
     "start": "npm run start --prefix server",
     "test": "node server/src/scripts/testSuite.js",
     "seed:admin": "npm run seed:admin --prefix server",
-    "install:all": "npm install && npm install --prefix server && npm install --prefix client"
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client --include=dev"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
