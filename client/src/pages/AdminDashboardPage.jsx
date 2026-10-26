@@ -160,6 +160,7 @@ export default function AdminDashboardPage() {
   const [staffLoading, setStaffLoading] = useState(false);
   const [staffModalOpen, setStaffModalOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState(null);
+  const [staffModalError, setStaffModalError] = useState(null);
   const [staffForm, setStaffForm] = useState({ name: '', email: '', password: '', departmentId: '' });
 
   // Audit Logs View States
@@ -512,7 +513,7 @@ export default function AdminDashboardPage() {
     setIsProcessing(true);
     try {
       if (editingDept) {
-        await departmentsAPI.update(editingDept._id, {
+        await departmentsAPI.update(editingDept._id || editingDept.id, {
           name: deptForm.name.trim(),
           description: deptForm.description.trim(),
         });
@@ -546,7 +547,7 @@ export default function AdminDashboardPage() {
 
   const handleToggleDeptActive = async (dept) => {
     try {
-      await departmentsAPI.update(dept._id, {
+      await departmentsAPI.update(dept._id || dept.id, {
         isActive: !dept.isActive,
       });
       setActionFeedback({
@@ -565,63 +566,96 @@ export default function AdminDashboardPage() {
   // Staff Operations Handlers
   const handleOpenNewStaffModal = () => {
     setEditingStaff(null);
+    setStaffModalError(null);
     setStaffForm({
       name: '',
       email: '',
       password: '',
-      departmentId: departmentsList[0]?._id || '',
+      departmentId: '',
     });
     setStaffModalOpen(true);
   };
 
   const handleOpenEditStaffModal = (staffUser) => {
     setEditingStaff(staffUser);
+    setStaffModalError(null);
+    const existingDeptId =
+      staffUser.department?._id ||
+      staffUser.department?.id ||
+      (typeof staffUser.department === 'string' ? staffUser.department : '');
     setStaffForm({
-      name: staffUser.name,
-      email: staffUser.email,
+      name: staffUser.name || '',
+      email: staffUser.email || '',
       password: '',
-      departmentId: staffUser.department?._id || staffUser.department || '',
+      departmentId: existingDeptId,
     });
     setStaffModalOpen(true);
   };
 
   const handleSaveStaff = async (e) => {
     e.preventDefault();
-    if (!staffForm.name.trim()) return;
+    setStaffModalError(null);
+
+    const name = staffForm.name.trim();
+    const departmentId = (staffForm.departmentId || '').trim();
+
+    if (!name || name.length < 2) {
+      setStaffModalError('Staff name is required (minimum 2 characters).');
+      return;
+    }
+
+    if (!departmentId) {
+      setStaffModalError('Please select a valid operational department.');
+      return;
+    }
 
     setIsProcessing(true);
     try {
       if (editingStaff) {
-        await adminAPI.updateStaff(editingStaff._id, {
-          name: staffForm.name.trim(),
-          departmentId: staffForm.departmentId,
+        const staffId = editingStaff._id || editingStaff.id;
+        await adminAPI.updateStaff(staffId, {
+          name,
+          departmentId,
         });
         setActionFeedback({
           type: 'success',
-          message: `Staff account "${staffForm.name}" updated.`,
+          message: `Staff account "${name}" updated successfully.`,
         });
+        setStaffModalOpen(false);
+        fetchStaff();
       } else {
-        if (!staffForm.email.trim() || !staffForm.password || staffForm.password.length < 6) {
-          throw new Error('Valid email and password (minimum 6 characters) are required.');
+        const email = staffForm.email.trim();
+        const password = staffForm.password;
+
+        if (!email) {
+          throw new Error('A valid institutional email address is required.');
         }
+        if (!password || password.length < 6) {
+          throw new Error('Initial password must be at least 6 characters long.');
+        }
+
         await adminAPI.createStaff({
-          name: staffForm.name.trim(),
-          email: staffForm.email.trim(),
-          password: staffForm.password,
-          departmentId: staffForm.departmentId,
+          name,
+          email,
+          password,
+          departmentId,
         });
         setActionFeedback({
           type: 'success',
-          message: `Staff member "${staffForm.name}" created successfully.`,
+          message: `Staff member "${name}" created successfully.`,
         });
+        setStaffModalOpen(false);
+        fetchStaff();
       }
-      setStaffModalOpen(false);
-      fetchStaff();
     } catch (err) {
+      console.error('Failed to save staff account:', err);
+      const errMsg = err.message || 'Failed to save staff account.';
+      setStaffModalError(errMsg);
       setActionFeedback({
         type: 'error',
-        message: err.message || 'Failed to save staff account.',
+        message: errMsg,
       });
+      // Preserve form inputs by keeping staffModalOpen true
     } finally {
       setIsProcessing(false);
     }
@@ -629,12 +663,14 @@ export default function AdminDashboardPage() {
 
   const handleToggleStaffActive = async (staffUser) => {
     try {
-      await adminAPI.updateStaff(staffUser._id, {
-        isActive: !staffUser.isActive,
+      const staffId = staffUser._id || staffUser.id;
+      const willBeActive = !(staffUser.isActive !== false);
+      await adminAPI.updateStaff(staffId, {
+        isActive: willBeActive,
       });
       setActionFeedback({
         type: 'success',
-        message: `Staff account "${staffUser.name}" marked ${!staffUser.isActive ? 'Active' : 'Inactive'}.`,
+        message: `Staff account "${staffUser.name}" marked ${willBeActive ? 'Active' : 'Disabled'}.`,
       });
       fetchStaff();
     } catch (err) {
@@ -800,9 +836,10 @@ export default function AdminDashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {departmentsList.map((dept) => {
-                      const workload = deptWorkloadMap.get(dept._id) || 0;
+                      const deptId = dept.id || dept._id;
+                      const workload = deptWorkloadMap.get(deptId) || 0;
                       return (
-                        <tr key={dept._id} className="hover:bg-slate-50/70 transition-colors">
+                        <tr key={deptId} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-3 px-4">
                             <div className="font-bold text-slate-900 text-xs flex items-center gap-2">
                               <span>{dept.name}</span>
@@ -905,7 +942,7 @@ export default function AdminDashboardPage() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {staffList.map((st) => (
-                      <tr key={st._id} className="hover:bg-slate-50/70 transition-colors">
+                      <tr key={st.id || st._id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-3 px-4">
                           <div className="font-bold text-slate-900 text-xs">{st.name}</div>
                           <div className="font-mono text-[11px] text-slate-400">{st.email}</div>
@@ -1004,7 +1041,7 @@ export default function AdminDashboardPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {auditLogs.map((log) => (
-                        <tr key={log._id} className="hover:bg-slate-50/70 transition-colors">
+                        <tr key={log.id || log._id} className="hover:bg-slate-50/70 transition-colors">
                           <td className="py-3 px-4 whitespace-nowrap text-slate-500 font-mono text-[11px]">
                             {new Date(log.timestamp).toLocaleString()}
                           </td>
@@ -1598,11 +1635,14 @@ export default function AdminDashboardPage() {
                   className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 font-medium"
                 >
                   <option value="All">All Departments</option>
-                  {departmentsList.map((d) => (
-                    <option key={d._id} value={d._id}>
-                      {d.name} ({d.code})
-                    </option>
-                  ))}
+                  {departmentsList.map((d) => {
+                    const id = d.id || d._id;
+                    return (
+                      <option key={id} value={id}>
+                        {d.name} ({d.code})
+                      </option>
+                    );
+                  })}
                 </select>
 
                 {/* Visibility Filter */}
@@ -1666,7 +1706,7 @@ export default function AdminDashboardPage() {
                   )}
                   {filterDepartment !== 'All' && (
                     <span className="inline-flex items-center gap-1 bg-purple-50 border border-purple-200 text-purple-800 px-2 py-0.5 rounded-full text-[11px]">
-                      Dept: {departmentsList.find((d) => d._id === filterDepartment)?.name || 'Filtered'}
+                      Dept: {departmentsList.find((d) => (d.id || d._id) === filterDepartment)?.name || 'Filtered'}
                       <button type="button" onClick={() => setFilterDepartment('All')} className="text-purple-400 hover:text-purple-600">✕</button>
                     </span>
                   )}
@@ -2121,6 +2161,23 @@ export default function AdminDashboardPage() {
             </p>
 
             <form onSubmit={handleSaveStaff} className="space-y-4">
+              {staffModalError && (
+                <div
+                  role="alert"
+                  className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-lg flex items-start gap-2"
+                >
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span className="flex-1 font-medium">{staffModalError}</span>
+                  <button
+                    type="button"
+                    onClick={() => setStaffModalError(null)}
+                    className="text-slate-400 hover:text-slate-600 font-bold"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Full Name *
@@ -2129,7 +2186,10 @@ export default function AdminDashboardPage() {
                   type="text"
                   required
                   value={staffForm.name}
-                  onChange={(e) => setStaffForm({ ...staffForm, name: e.target.value })}
+                  onChange={(e) => {
+                    setStaffModalError(null);
+                    setStaffForm({ ...staffForm, name: e.target.value });
+                  }}
                   placeholder="e.g. John Doe, Lead Technician"
                   className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-purple-500"
                 />
@@ -2145,7 +2205,10 @@ export default function AdminDashboardPage() {
                       type="email"
                       required
                       value={staffForm.email}
-                      onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })}
+                      onChange={(e) => {
+                        setStaffModalError(null);
+                        setStaffForm({ ...staffForm, email: e.target.value });
+                      }}
                       placeholder="staff.lead@campuspulse.edu"
                       className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-purple-500"
                     />
@@ -2160,7 +2223,10 @@ export default function AdminDashboardPage() {
                       required
                       minLength={6}
                       value={staffForm.password}
-                      onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })}
+                      onChange={(e) => {
+                        setStaffModalError(null);
+                        setStaffForm({ ...staffForm, password: e.target.value });
+                      }}
                       placeholder="At least 6 characters"
                       className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-purple-500"
                     />
@@ -2175,15 +2241,23 @@ export default function AdminDashboardPage() {
                 <select
                   required
                   value={staffForm.departmentId}
-                  onChange={(e) => setStaffForm({ ...staffForm, departmentId: e.target.value })}
+                  onChange={(e) => {
+                    setStaffModalError(null);
+                    setStaffForm({ ...staffForm, departmentId: e.target.value });
+                  }}
                   className="w-full text-xs p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-purple-500"
                 >
                   <option value="">Select Operational Department...</option>
-                  {departmentsList.map((d) => (
-                    <option key={d._id} value={d._id}>
-                      {d.name} ({d.code})
-                    </option>
-                  ))}
+                  {departmentsList
+                    .filter((d) => d.isActive !== false)
+                    .map((d) => {
+                      const id = d._id || d.id;
+                      return (
+                        <option key={id} value={id}>
+                          {d.name} ({d.code})
+                        </option>
+                      );
+                    })}
                 </select>
               </div>
 

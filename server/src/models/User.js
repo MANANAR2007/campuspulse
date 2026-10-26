@@ -60,7 +60,7 @@ const userSchema = new mongoose.Schema(
     toJSON: {
       transform: (doc, ret) => {
         ret.id = ret._id.toString();
-        delete ret._id;
+        ret._id = ret._id.toString();
         delete ret.__v;
         delete ret.passwordHash;
         return ret;
@@ -69,7 +69,7 @@ const userSchema = new mongoose.Schema(
     toObject: {
       transform: (doc, ret) => {
         ret.id = ret._id.toString();
-        delete ret._id;
+        ret._id = ret._id.toString();
         delete ret.__v;
         delete ret.passwordHash;
         return ret;

@@ -93,7 +93,7 @@ async function runTests() {
 
     // Clean up any stale test accounts from previous runs
     const testEmail = `test_student_${Date.now()}@campus.edu`;
-    await User.deleteMany({ email: { $regex: /^(test_student_|test_staff_|student2_)/ } });
+    await User.deleteMany({ email: { $regex: /^(test_student_|test_staff_|student2_|spoof_staff_)/ } });
     await Department.deleteMany({ code: { $regex: /^ROBOT_/ } });
 
     // 1. Health Check Endpoint
@@ -701,6 +701,168 @@ async function runTests() {
     assert(createStaffRes.status === 201, 'Admin POST /api/admin/staff returns HTTP 201');
     const testStaffId = createStaffData.data.user?._id || createStaffData.data.staff?._id || createStaffData.data.user?.id;
 
+    // Verify created staff member appears in GET /api/admin/staff listing
+    const getStaffRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      headers: { Cookie: adminCookie },
+    });
+    const getStaffData = await getStaffRes.json();
+    assert(getStaffRes.status === 200, 'Admin GET /api/admin/staff returns HTTP 200');
+    const createdStaffMember = getStaffData.data?.staff?.find((s) => (s.id || s._id) === testStaffId);
+    assert(Boolean(createdStaffMember), 'Created staff member appears in GET /api/admin/staff listing');
+    assert(
+      (createdStaffMember?.department?.id || createdStaffMember?.department?._id || createdStaffMember?.department) === testDeptId,
+      'Staff member in admin listing is associated with correct department'
+    );
+
+    // Negative Test: Invalid department ID format -> 400
+    const invalidDeptRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        name: 'Invalid Dept Tech',
+        email: `invalid_dept_${Date.now()}@campuspulse.edu`,
+        password: 'password123',
+        departmentId: 'invalid-id-xyz',
+      }),
+    });
+    const invalidDeptData = await invalidDeptRes.json();
+    assert(invalidDeptRes.status === 400, 'POST /api/admin/staff with malformed department ID returns HTTP 400');
+    assert(invalidDeptData.message === 'Valid department ID is required.', 'Returns "Valid department ID is required." error message');
+
+    // Negative Test: Nonexistent department ID -> 404
+    const nonExistentId = new mongoose.Types.ObjectId().toString();
+    const nonExistentDeptRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        name: 'Ghost Dept Tech',
+        email: `ghost_dept_${Date.now()}@campuspulse.edu`,
+        password: 'password123',
+        departmentId: nonExistentId,
+      }),
+    });
+    const nonExistentDeptData = await nonExistentDeptRes.json();
+    assert(nonExistentDeptRes.status === 404, 'POST /api/admin/staff with nonexistent department ID returns HTTP 404');
+    assert(nonExistentDeptData.message === 'Department not found.', 'Returns "Department not found." error message');
+
+    // Negative Test: Inactive department -> 400
+    const deactivateRes = await fetch(`${BASE_URL}/api/departments/${testDeptId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({ isActive: false }),
+    });
+    assert(deactivateRes.status === 200, 'Admin deactivates department returns HTTP 200');
+
+    const inactiveStaffRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        name: 'Inactive Dept Tech',
+        email: `inactive_dept_${Date.now()}@campuspulse.edu`,
+        password: 'password123',
+        departmentId: testDeptId,
+      }),
+    });
+    const inactiveStaffData = await inactiveStaffRes.json();
+    assert(inactiveStaffRes.status === 400, 'POST /api/admin/staff for inactive department returns HTTP 400');
+    assert(
+      inactiveStaffData.message === 'Cannot assign staff to an inactive department.',
+      'Returns "Cannot assign staff to an inactive department." error message'
+    );
+
+    // Reactivate department for subsequent tests
+    const reactivateRes = await fetch(`${BASE_URL}/api/departments/${testDeptId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({ isActive: true }),
+    });
+    assert(reactivateRes.status === 200, 'Admin reactivates department returns HTTP 200');
+
+    // Negative Test: Duplicate email address -> 409
+    const duplicateEmailRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        name: 'Duplicate Staff Tech',
+        email: staffEmail,
+        password: 'password123',
+        departmentId: testDeptId,
+      }),
+    });
+    const duplicateEmailData = await duplicateEmailRes.json();
+    assert(duplicateEmailRes.status === 409, 'POST /api/admin/staff with duplicate email returns HTTP 409 Conflict');
+    assert(
+      duplicateEmailData.message === 'An account with this email address already exists.',
+      'Returns "An account with this email address already exists." error message'
+    );
+
+    // Negative Test: Unauthorized requests -> 403 Forbidden for student, 401 Unauthorized for guest
+    const studentStaffRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: studentCookie,
+      },
+      body: JSON.stringify({
+        name: 'Hacked Staff Tech',
+        email: `hacked_staff_${Date.now()}@campuspulse.edu`,
+        password: 'password123',
+        departmentId: testDeptId,
+      }),
+    });
+    assert(studentStaffRes.status === 403, 'Student attempting POST /api/admin/staff returns HTTP 403 Forbidden');
+
+    const unauthStaffRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'Unauth Staff Tech',
+        email: `unauth_staff_${Date.now()}@campuspulse.edu`,
+        password: 'password123',
+        departmentId: testDeptId,
+      }),
+    });
+    assert(unauthStaffRes.status === 401, 'Unauthenticated POST /api/admin/staff returns HTTP 401 Unauthorized');
+
+    // Security Test: Public registration ignores spoofed role and strictly enforces student role
+    const spoofStaffEmail = `spoof_staff_${Date.now()}@campus.edu`;
+    const spoofRegisterRes = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Spoofed Role User',
+        email: spoofStaffEmail,
+        password: 'password123',
+        role: 'staff',
+      }),
+    });
+    const spoofRegisterData = await spoofRegisterRes.json();
+    assert(spoofRegisterRes.status === 201, 'Public user registration with role:"staff" returns HTTP 201');
+    assert(
+      (spoofRegisterData.user || spoofRegisterData.data?.user)?.role === 'student',
+      'Public registration ignores spoofed role and strictly enforces "student" role'
+    );
+
     // Staff login
     const staffLoginRes = await fetch(`${BASE_URL}/api/auth/login`, {
       method: 'POST',
@@ -983,7 +1145,7 @@ async function runTests() {
     if (testStudentUser && testStudentUser.id) {
       await User.findByIdAndDelete(testStudentUser.id);
     }
-    await User.deleteMany({ email: { $in: [staffEmail, student2Email] } });
+    await User.deleteMany({ email: { $in: [staffEmail, student2Email, spoofStaffEmail] } });
     await AuditEvent.deleteMany({ entityId: { $in: [testIssueId, confIssueId, testDeptId] } });
 
     console.log(`  ${green('Test records cleaned up successfully.')}`);

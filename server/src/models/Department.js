@@ -34,7 +34,7 @@ const departmentSchema = new mongoose.Schema(
     toJSON: {
       transform: (doc, ret) => {
         ret.id = ret._id.toString();
-        delete ret._id;
+        ret._id = ret._id.toString();
         delete ret.__v;
         return ret;
       },
@@ -42,7 +42,7 @@ const departmentSchema = new mongoose.Schema(
     toObject: {
       transform: (doc, ret) => {
         ret.id = ret._id.toString();
-        delete ret._id;
+        ret._id = ret._id.toString();
         delete ret.__v;
         return ret;
       },

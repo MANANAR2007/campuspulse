@@ -1431,7 +1431,8 @@ export const getStaffUsers = async (req, res, next) => {
  */
 export const createStaffUser = async (req, res, next) => {
   try {
-    const { name, email, password, departmentId } = req.body;
+    const { name, email, password } = req.body;
+    const departmentId = (req.body.departmentId || req.body.department || '').toString().trim();
 
     if (!name || typeof name !== 'string' || name.trim().length < 2) {
       return res.status(400).json({
@@ -1470,6 +1471,13 @@ export const createStaffUser = async (req, res, next) => {
       });
     }
 
+    if (department.isActive === false) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Cannot assign staff to an inactive department.',
+      });
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
     const existing = await User.findOne({ email: normalizedEmail });
     if (existing) {
@@ -1496,15 +1504,23 @@ export const createStaffUser = async (req, res, next) => {
       entityId: newStaff._id,
       action: 'staff_account_created',
       actor: req.user._id,
-      details: { name: newStaff.name, email: newStaff.email, department: department.name },
-      reason: 'Created by administrator',
+      details: {
+        name: newStaff.name,
+        email: newStaff.email,
+        department: department.name,
+        departmentId: department._id,
+      },
+      reason: 'Staff account provisioned by administrator',
     });
+
+    const staffObj = newStaff.toJSON();
 
     res.status(201).json({
       status: 'success',
       message: 'Department staff account created successfully.',
       data: {
-        user: newStaff.toJSON(),
+        user: staffObj,
+        staff: staffObj,
       },
     });
   } catch (error) {
@@ -1519,7 +1535,8 @@ export const createStaffUser = async (req, res, next) => {
 export const updateStaffUser = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, departmentId, isActive } = req.body;
+    const { name, isActive } = req.body;
+    const rawDeptId = req.body.departmentId || req.body.department;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -1540,12 +1557,32 @@ export const updateStaffUser = async (req, res, next) => {
       staffUser.name = name.trim();
     }
 
-    if (departmentId && mongoose.Types.ObjectId.isValid(departmentId)) {
-      const dept = await Department.findById(departmentId);
-      if (dept) {
-        staffUser.department = dept._id;
-        staffUser.departmentName = dept.name;
+    if (rawDeptId !== undefined) {
+      const cleanDeptId = (rawDeptId || '').toString().trim();
+      if (!cleanDeptId || !mongoose.Types.ObjectId.isValid(cleanDeptId)) {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'Valid department ID is required.',
+        });
       }
+
+      const dept = await Department.findById(cleanDeptId);
+      if (!dept) {
+        return res.status(404).json({
+          status: 'fail',
+          message: 'Department not found.',
+        });
+      }
+
+      if (dept.isActive === false) {
+        return res.status(400).json({
+          status: 'fail',
+          message: 'Cannot assign staff to an inactive department.',
+        });
+      }
+
+      staffUser.department = dept._id;
+      staffUser.departmentName = dept.name;
     }
 
     if (isActive !== undefined) {
@@ -1563,11 +1600,14 @@ export const updateStaffUser = async (req, res, next) => {
       reason: 'Updated by administrator',
     });
 
+    const staffObj = staffUser.toJSON();
+
     res.status(200).json({
       status: 'success',
       message: 'Staff account updated successfully.',
       data: {
-        user: staffUser.toJSON(),
+        user: staffObj,
+        staff: staffObj,
       },
     });
   } catch (error) {
