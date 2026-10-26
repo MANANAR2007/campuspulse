@@ -2,11 +2,17 @@ import mongoose from 'mongoose';
 import Issue, {
   ISSUE_CATEGORIES,
   ISSUE_SEVERITIES,
+  ISSUE_VISIBILITY,
+  ISSUE_PRIORITIES,
   CAMPUS_ZONES,
 } from '../models/Issue.js';
 import IssueConfirmation from '../models/IssueConfirmation.js';
 import Comment from '../models/Comment.js';
+import Department from '../models/Department.js';
+import User from '../models/User.js';
+import { logAuditEvent } from '../models/AuditEvent.js';
 import { normalizeCategory } from '../utils/categoryHelper.js';
+import { createNotification } from '../utils/notificationHelper.js';
 import {
   uploadToCloudinary,
   deleteFromCloudinary,
@@ -17,7 +23,61 @@ import {
   emitIssueUpdated,
   emitIssueDeleted,
   emitConfirmationUpdated,
+  emitStatusChanged,
 } from '../utils/socket.js';
+
+/**
+ * Access control validator for three-tier issue visibility
+ */
+export const canUserViewIssue = (user, issue) => {
+  if (!user || !issue) return false;
+
+  // 1. Admin can view all issues
+  if (user.role === 'admin') return true;
+
+  // 2. Creator can always view their own report
+  const creatorId = issue.createdBy?._id || issue.createdBy;
+  if (creatorId && creatorId.toString() === user._id.toString()) {
+    return true;
+  }
+
+  // 3. Rejected issues are restricted to author and admin only
+  if (issue.status === 'rejected') {
+    return false;
+  }
+
+  const visibility = issue.visibility || 'public';
+
+  // 4. Public issues
+  if (visibility === 'public') {
+    return true;
+  }
+
+  // 5. Department-only issues
+  if (visibility === 'department_only') {
+    if (user.role === 'staff' && user.isActive !== false) {
+      const issueDeptId = issue.department?._id || issue.department;
+      const userDeptId = user.department?._id || user.department;
+      if (issueDeptId && userDeptId && issueDeptId.toString() === userDeptId.toString()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // 6. Confidential issues
+  if (visibility === 'confidential') {
+    if (user.role === 'staff' && user.isActive !== false) {
+      const assignedId = issue.assignedTo?._id || issue.assignedTo;
+      if (assignedId && assignedId.toString() === user._id.toString()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return false;
+};
 
 /**
  * Batched confirmation metadata helper for feed queries
@@ -70,6 +130,8 @@ export const createIssue = async (req, res, next) => {
       severity,
       location,
       campusAlertRequested,
+      visibility,
+      department,
     } = req.body;
 
     // 1. Validation: Title
@@ -218,6 +280,14 @@ export const createIssue = async (req, res, next) => {
       campusAlertRequested === 'true' ||
       campusAlertRequested === 1;
 
+    const normalizedVisibility =
+      visibility && ISSUE_VISIBILITY.includes(visibility.trim().toLowerCase())
+        ? visibility.trim().toLowerCase()
+        : 'public';
+
+    const assignedDepartment =
+      department && mongoose.Types.ObjectId.isValid(department) ? department : null;
+
     let newIssue;
     try {
       newIssue = await Issue.create({
@@ -229,6 +299,9 @@ export const createIssue = async (req, res, next) => {
         imageUrl,
         imagePublicId,
         campusAlertRequested: Boolean(isAlertReq),
+        visibility: normalizedVisibility,
+        department: assignedDepartment,
+        priority: 'normal',
         // Protected fields strictly enforced by backend
         createdBy: req.user._id,
         status: 'reported',
@@ -253,17 +326,34 @@ export const createIssue = async (req, res, next) => {
       throw dbError;
     }
 
-    const populatedIssue = await Issue.findById(newIssue._id).populate(
-      'createdBy',
-      'name email department role'
-    );
+    const populatedIssue = await Issue.findById(newIssue._id)
+      .populate('createdBy', 'name email department role')
+      .populate('department', 'name code isActive');
+
+    // Audit log for report creation
+    await logAuditEvent({
+      entityType: 'issue',
+      entityId: newIssue._id,
+      action: 'issue_created',
+      actor: req.user._id,
+      details: {
+        title: newIssue.title,
+        category: newIssue.category,
+        severity: newIssue.severity,
+        visibility: newIssue.visibility,
+        campusZone: newIssue.location?.campusZone,
+      },
+      reason: 'Initial issue filing',
+    });
 
     const issueObject = populatedIssue.toObject();
     issueObject.confirmationCount = 0;
     issueObject.currentUserConfirmed = false;
 
-    // Realtime broadcast for new report
-    emitIssueCreated(issueObject);
+    // Realtime broadcast (only broadcast public reports globally to prevent privacy leaks)
+    if (newIssue.visibility === 'public') {
+      emitIssueCreated(issueObject);
+    }
 
     res.status(201).json({
       status: 'success',
@@ -337,17 +427,56 @@ export const getIssues = async (req, res, next) => {
       sortOptions = { createdAt: 1 };
     }
 
+    // Privacy and Visibility Enforcement:
+    // Confidential reports are visible only to author, admin, and explicitly assigned staff.
+    // Department-only reports are visible to author, admin, and department staff.
+    // Public reports are visible to all.
+    const visibilityClauses = [];
+    if (req.user?.role === 'admin') {
+      // Admin sees all non-rejected issues in the feed
+    } else if (req.user?.role === 'staff') {
+      visibilityClauses.push({ visibility: 'public' });
+      if (req.user._id) visibilityClauses.push({ createdBy: req.user._id });
+      if (req.user.department) {
+        visibilityClauses.push({ visibility: 'department_only', department: req.user.department });
+      }
+      if (req.user._id) {
+        visibilityClauses.push({ visibility: 'confidential', assignedTo: req.user._id });
+      }
+    } else {
+      visibilityClauses.push({ visibility: 'public' });
+      if (req.user?._id) {
+        visibilityClauses.push({ createdBy: req.user._id });
+      }
+    }
+
+    let finalQuery = { ...filter };
+    if (visibilityClauses.length > 0) {
+      if (filter.$or) {
+        finalQuery = {
+          $and: [
+            { $or: visibilityClauses },
+            filter,
+          ],
+        };
+      } else {
+        finalQuery.$or = visibilityClauses;
+      }
+    }
+
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
     const [rawIssues, totalCount] = await Promise.all([
-      Issue.find(filter)
+      Issue.find(finalQuery)
         .sort(sortOptions)
         .skip(skip)
         .limit(limit)
-        .populate('createdBy', 'name email department role'),
-      Issue.countDocuments(filter),
+        .populate('createdBy', 'name email department role')
+        .populate('assignedTo', 'name email department departmentName')
+        .populate('department', 'name code isActive'),
+      Issue.countDocuments(finalQuery),
     ]);
 
     const issues = await attachConfirmationData(rawIssues, req.user?._id);
@@ -473,7 +602,16 @@ export const getIssueById = async (req, res, next) => {
     const issue = await Issue.findById(id)
       .populate('createdBy', 'name email department role')
       .populate('reviewedBy', 'name email role')
-      .populate('statusHistory.changedBy', 'name email role');
+      .populate('assignedTo', 'name email department departmentName isActive')
+      .populate('department', 'name code isActive')
+      .populate('resolvedBy', 'name email role')
+      .populate('reopenedBy', 'name email role')
+      .populate('statusHistory.changedBy', 'name email role')
+      .populate('assignmentHistory.changedBy', 'name email role')
+      .populate('assignmentHistory.previousDepartment', 'name code')
+      .populate('assignmentHistory.newDepartment', 'name code')
+      .populate('assignmentHistory.previousAssignee', 'name email')
+      .populate('assignmentHistory.newAssignee', 'name email');
 
     if (!issue) {
       return res.status(404).json({
@@ -482,15 +620,11 @@ export const getIssueById = async (req, res, next) => {
       });
     }
 
-    // Rejected reports are accessible only to the author or an administrator
-    if (
-      issue.status === 'rejected' &&
-      req.user.role !== 'admin' &&
-      !issue.createdBy._id.equals(req.user._id)
-    ) {
+    // Three-tier visibility and privacy access check
+    if (!canUserViewIssue(req.user, issue)) {
       return res.status(404).json({
         status: 'fail',
-        message: 'Issue report not accessible.',
+        message: 'Issue report not found or access restricted.',
       });
     }
 
@@ -967,10 +1101,22 @@ export const checkDuplicateIssues = async (req, res, next) => {
       });
     }
 
-    // Query non-rejected reports
+    // Duplicate radar privacy enforcement:
+    // Confidential and department-only reports must NEVER leak through duplicate suggestions to other users
+    const duplicatePrivacyFilter = {
+      $or: [
+        { visibility: 'public' },
+        ...(req.user?._id ? [{ createdBy: req.user._id }] : []),
+      ],
+    };
+
+    // Query non-rejected reports matching privacy filter and keywords
     const candidates = await Issue.find({
       status: { $ne: 'rejected' },
-      $or: conditions,
+      $and: [
+        duplicatePrivacyFilter,
+        { $or: conditions },
+      ],
     })
       .sort({ createdAt: -1 })
       .limit(30)
@@ -1034,6 +1180,199 @@ export const checkDuplicateIssues = async (req, res, next) => {
       status: 'success',
       data: {
         duplicates: duplicatesWithAffirmations,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/issues/:id/reopen
+ * Reopen a resolved issue report (allowed only for author or administrator)
+ */
+export const reopenIssue = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid issue ID format.',
+      });
+    }
+
+    const issue = await Issue.findById(id);
+    if (!issue) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Issue report not found.',
+      });
+    }
+
+    // Permission check: only author or administrator
+    const isAuthor = issue.createdBy.equals(req.user._id);
+    const isAdmin = req.user.role === 'admin';
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'Access denied: Only the student who reported this issue or an administrator can reopen it.',
+      });
+    }
+
+    if (issue.status !== 'resolved') {
+      return res.status(400).json({
+        status: 'fail',
+        message: `Cannot reopen an issue with status '${issue.status}'. Only resolved issues can be reopened.`,
+      });
+    }
+
+    if (!reason || typeof reason !== 'string' || reason.trim().length < 10) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'A clear explanation for reopening the issue is required (minimum 10 characters).',
+      });
+    }
+
+    const trimmedReason = reason.trim();
+    issue.status = 'in_progress';
+    issue.reopenedAt = new Date();
+    issue.reopenedBy = req.user._id;
+    issue.reopenReason = trimmedReason;
+    issue.reopenCount = (issue.reopenCount || 0) + 1;
+    issue.reporterConfirmed = false;
+
+    issue.statusHistory.push({
+      status: 'in_progress',
+      changedBy: req.user._id,
+      note: `Reopened by ${isAdmin ? 'administrator' : 'student reporter'}. Reason: "${trimmedReason}"`,
+      timestamp: new Date(),
+    });
+
+    await issue.save();
+
+    await logAuditEvent({
+      entityType: 'issue',
+      entityId: issue._id,
+      action: 'issue_reopened',
+      actor: req.user._id,
+      details: { reopenCount: issue.reopenCount },
+      reason: trimmedReason,
+    });
+
+    // Notify assigned staff
+    if (issue.assignedTo) {
+      await createNotification({
+        recipient: issue.assignedTo,
+        actor: req.user._id,
+        issue: issue._id,
+        type: 'issue_reopened',
+        title: 'Issue Reopened by Student',
+        message: `Student reporter has reopened "${issue.title}". Reason: "${trimmedReason}"`,
+      });
+    }
+
+    const updatedIssue = await Issue.findById(issue._id)
+      .populate('createdBy', 'name email department role')
+      .populate('reviewedBy', 'name email role')
+      .populate('assignedTo', 'name email department departmentName isActive')
+      .populate('department', 'name code isActive')
+      .populate('statusHistory.changedBy', 'name email role');
+
+    emitStatusChanged(updatedIssue);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Issue report successfully reopened for further action.',
+      data: {
+        issue: updatedIssue,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/issues/:id/confirm-resolution
+ * Confirm that resolution has solved the reported issue
+ */
+export const confirmResolution = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { feedback } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid issue ID format.',
+      });
+    }
+
+    const issue = await Issue.findById(id);
+    if (!issue) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Issue report not found.',
+      });
+    }
+
+    const isAuthor = issue.createdBy.equals(req.user._id);
+    const isAdmin = req.user.role === 'admin';
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'Only the student who reported this issue can confirm resolution.',
+      });
+    }
+
+    if (issue.status !== 'resolved') {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Resolution can only be confirmed on resolved issues.',
+      });
+    }
+
+    issue.reporterConfirmed = true;
+    if (feedback && typeof feedback === 'string') {
+      issue.reporterFeedback = feedback.trim();
+    }
+
+    await issue.save();
+
+    await logAuditEvent({
+      entityType: 'issue',
+      entityId: issue._id,
+      action: 'resolution_confirmed',
+      actor: req.user._id,
+      details: { reporterConfirmed: true, feedback: issue.reporterFeedback },
+      reason: 'Reporter verified resolution',
+    });
+
+    if (issue.assignedTo) {
+      await createNotification({
+        recipient: issue.assignedTo,
+        actor: req.user._id,
+        issue: issue._id,
+        type: 'status_updated',
+        title: 'Resolution Confirmed by Student',
+        message: `Student verified that "${issue.title}" has been successfully resolved.`,
+      });
+    }
+
+    const updatedIssue = await Issue.findById(issue._id)
+      .populate('createdBy', 'name email department role')
+      .populate('assignedTo', 'name email department departmentName isActive')
+      .populate('department', 'name code isActive');
+
+    emitIssueUpdated(updatedIssue);
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Resolution confirmed successfully. Thank you for your feedback.',
+      data: {
+        issue: updatedIssue,
       },
     });
   } catch (error) {

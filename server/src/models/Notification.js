@@ -6,6 +6,11 @@ export const NOTIFICATION_TYPES = [
   'status_updated',
   'issue_comment',
   'campus_alert',
+  'issue_assigned',
+  'issue_redirected',
+  'issue_reopened',
+  'issue_resolved',
+  'issue_escalated',
 ];
 
 const notificationSchema = new mongoose.Schema(

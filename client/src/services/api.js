@@ -189,6 +189,20 @@ export const issuesAPI = {
     request(`/issues/duplicates${buildQueryString(params)}`, {
       method: 'GET',
     }),
+
+  // POST /api/issues/:id/reopen (Student/Admin reopen resolved issue)
+  reopen: (id, data) =>
+    request(`/issues/${id}/reopen`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // POST /api/issues/:id/confirm-resolution (Student resolution confirmation)
+  confirmResolution: (id, data = {}) =>
+    request(`/issues/${id}/confirm-resolution`, {
+      method: 'POST',
+      body: data,
+    }),
 };
 
 /**
@@ -286,7 +300,157 @@ export const adminAPI = {
     request('/admin/hotspots', {
       method: 'GET',
     }),
+
+  // POST /api/admin/issues/:id/assign
+  assignIssue: (id, data) =>
+    request(`/admin/issues/${id}/assign`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // POST /api/admin/issues/:id/redirect
+  redirectIssue: (id, data) =>
+    request(`/admin/issues/${id}/redirect`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // POST /api/admin/issues/:id/unassign
+  unassignIssue: (id, data = {}) =>
+    request(`/admin/issues/${id}/unassign`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // POST /api/admin/issues/:id/priority-deadline
+  updatePriorityAndDeadlines: (id, data) =>
+    request(`/admin/issues/${id}/priority-deadline`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // POST /api/admin/issues/:id/visibility
+  updateVisibility: (id, data) =>
+    request(`/admin/issues/${id}/visibility`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // GET /api/admin/staff
+  getStaff: () =>
+    request('/admin/staff', {
+      method: 'GET',
+    }),
+
+  // POST /api/admin/staff
+  createStaff: (data) =>
+    request('/admin/staff', {
+      method: 'POST',
+      body: data,
+    }),
+
+  // PATCH /api/admin/staff/:id
+  updateStaff: (id, data) =>
+    request(`/admin/staff/${id}`, {
+      method: 'PATCH',
+      body: data,
+    }),
+
+  // GET /api/admin/audit-logs
+  getAuditLogs: (params = {}) =>
+    request(`/admin/audit-logs${buildQueryString(params)}`, {
+      method: 'GET',
+    }),
 };
+
+/**
+ * Campus Department Management API
+ */
+export const departmentsAPI = {
+  // GET /api/departments
+  getAll: (params = {}) =>
+    request(`/departments${buildQueryString(params)}`, {
+      method: 'GET',
+    }),
+
+  // GET /api/departments/:id/staff
+  getStaff: (id) =>
+    request(`/departments/${id}/staff`, {
+      method: 'GET',
+    }),
+
+  // POST /api/departments
+  create: (data) =>
+    request('/departments', {
+      method: 'POST',
+      body: data,
+    }),
+
+  // PUT /api/departments/:id
+  update: (id, data) =>
+    request(`/departments/${id}`, {
+      method: 'PUT',
+      body: data,
+    }),
+};
+
+/**
+ * Staff Work Queue and Operations API
+ */
+export const staffAPI = {
+  // GET /api/staff/queue
+  getQueue: () =>
+    request('/staff/queue', {
+      method: 'GET',
+    }),
+
+  // GET /api/staff/stats
+  getStats: () =>
+    request('/staff/stats', {
+      method: 'GET',
+    }),
+
+  // PATCH /api/staff/issues/:id/status
+  updateStatus: (id, data) =>
+    request(`/staff/issues/${id}/status`, {
+      method: 'PATCH',
+      body: data,
+    }),
+};
+
+/**
+ * Standardized Campus Issue Visibilities
+ */
+export const ISSUE_VISIBILITIES = [
+  {
+    value: 'public',
+    label: 'Public (Campus Feed)',
+    description: 'Visible to all students, staff, and administrators on the campus feed.',
+    color: 'emerald',
+  },
+  {
+    value: 'department_only',
+    label: 'Department Only',
+    description: 'Visible only to the reporting student, administrators, and assigned department staff.',
+    color: 'amber',
+  },
+  {
+    value: 'confidential',
+    label: 'Confidential (Sensitive)',
+    description: 'Sensitive report visible strictly to you, administrators, and the assigned specialist.',
+    color: 'purple',
+  },
+];
+
+/**
+ * Standardized Campus Issue Priorities
+ */
+export const ISSUE_PRIORITIES = [
+  { value: 'low', label: 'Low', color: 'slate' },
+  { value: 'normal', label: 'Normal', color: 'blue' },
+  { value: 'high', label: 'High', color: 'amber' },
+  { value: 'critical', label: 'Critical', color: 'rose' },
+];
 
 /**
  * Standardized Campus Zones list for frontend forms and drill-downs

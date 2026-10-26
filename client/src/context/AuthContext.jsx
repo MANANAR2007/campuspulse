@@ -121,6 +121,8 @@ export function AuthProvider({ children }) {
     refreshNotificationsCount: fetchUnreadNotifications,
     isAuthenticated: !!user,
     isAdmin: user?.role === 'admin',
+    isStaff: user?.role === 'staff',
+    isStudent: user?.role === 'student',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

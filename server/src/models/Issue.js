@@ -16,9 +16,15 @@ export const ISSUE_STATUSES = [
   'reported',
   'verified',
   'in_progress',
+  'awaiting_info',
   'resolved',
   'rejected',
+  'escalated',
 ];
+
+export const ISSUE_VISIBILITY = ['public', 'department_only', 'confidential'];
+
+export const ISSUE_PRIORITIES = ['low', 'normal', 'high', 'critical'];
 
 export const CAMPUS_ZONES = [
   'academic_blocks',
@@ -98,6 +104,55 @@ const statusHistoryEntrySchema = new mongoose.Schema(
       trim: true,
       maxlength: [1000, 'Status transition note cannot exceed 1000 characters'],
       default: '',
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
+);
+
+/**
+ * Assignment and Redirection History Entry sub-schema
+ */
+const assignmentHistoryEntrySchema = new mongoose.Schema(
+  {
+    previousDepartment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+      default: null,
+    },
+    newDepartment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+      default: null,
+    },
+    previousAssignee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    newAssignee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    changedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+    },
+    reason: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Reason cannot exceed 1000 characters'],
+      default: '',
+    },
+    action: {
+      type: String,
+      enum: ['assigned', 'reassigned', 'redirected', 'unassigned'],
+      default: 'assigned',
     },
     timestamp: {
       type: Date,
@@ -202,6 +257,128 @@ const issueSchema = new mongoose.Schema(
       maxlength: [1000, 'Resolution note cannot exceed 1000 characters'],
       default: '',
     },
+    // Visibility: public, department_only, or confidential
+    visibility: {
+      type: String,
+      enum: {
+        values: ISSUE_VISIBILITY,
+        message: 'Invalid issue visibility: {VALUE}',
+      },
+      default: 'public',
+      lowercase: true,
+      index: true,
+    },
+    // Priority: low, normal, high, critical
+    priority: {
+      type: String,
+      enum: {
+        values: ISSUE_PRIORITIES,
+        message: 'Invalid issue priority: {VALUE}',
+      },
+      default: 'normal',
+      lowercase: true,
+      index: true,
+    },
+    // Assigned Department
+    department: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+      default: null,
+      index: true,
+    },
+    // Assigned Staff Member
+    assignedTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    assignedAt: {
+      type: Date,
+      default: null,
+    },
+    assignedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    assignmentNote: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Assignment note cannot exceed 1000 characters'],
+      default: '',
+    },
+    assignmentHistory: {
+      type: [assignmentHistoryEntrySchema],
+      default: [],
+    },
+    // Response & Resolution SLA Deadlines
+    responseDeadline: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    resolutionDeadline: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    deadlineReason: {
+      type: String,
+      trim: true,
+      maxlength: [500, 'Deadline modification reason cannot exceed 500 characters'],
+      default: '',
+    },
+    // Resolution Details
+    resolvedAt: {
+      type: Date,
+      default: null,
+    },
+    resolvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    resolutionEvidenceUrl: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    resolutionEvidencePublicId: {
+      type: String,
+      trim: true,
+      default: '',
+    },
+    // Reporter Verification & Dispute/Reopen
+    reporterConfirmed: {
+      type: Boolean,
+      default: false,
+    },
+    reporterFeedback: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Reporter feedback cannot exceed 1000 characters'],
+      default: '',
+    },
+    reopenedAt: {
+      type: Date,
+      default: null,
+    },
+    reopenedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    reopenReason: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Reopen reason cannot exceed 1000 characters'],
+      default: '',
+    },
+    reopenCount: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
@@ -232,6 +409,10 @@ issueSchema.index({ isCampusWideAlert: 1, status: 1 });
 issueSchema.index({ createdBy: 1, createdAt: -1 });
 issueSchema.index({ 'location.campusZone': 1, status: 1 });
 issueSchema.index({ 'location.campusZone': 1, createdAt: -1 });
+issueSchema.index({ visibility: 1, status: 1 });
+issueSchema.index({ department: 1, status: 1 });
+issueSchema.index({ assignedTo: 1, status: 1 });
+issueSchema.index({ resolutionDeadline: 1, status: 1 });
 
 // Text index for safe keyword search and duplicate detection
 issueSchema.index(

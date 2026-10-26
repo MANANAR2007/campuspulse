@@ -1,140 +1,128 @@
-# CampusPulse — End-Term Viva Demonstration Script 🎓⚡
+# CampusPulse 2.0 — End-Term Viva Demonstration Script 🎓⚡
 
 > **Estimated Presentation Time:** 3 – 5 minutes  
 > **Target Audience:** College Examination Panel / Evaluators  
-> **Preparation:** Open two side-by-side browser windows:
-> - **Left Window:** Student Session (`http://localhost:5173` or production URL)
-> - **Right Window:** Admin Session (Incognito window or separate profile)
+> **Preparation:** Open three browser windows or tabs:
+> - **Window 1 (Student Mode):** Regular browser session (`http://localhost:5173`)
+> - **Window 2 (Staff Mode):** Incognito window logged in as Department Staff (`/staff`)
+> - **Window 3 (Admin Mode):** Second profile or separate window logged in as Campus Admin (`/admin`)
 
 ---
 
 ## 📋 Pre-Demo Verification Checklist
 
-1. **Database & Server Running:**
+1. **Automated Test Suite Verification:**
    ```bash
-   npm run test
+   npm test
    ```
-   *(Confirms 65/65 test cases pass: MongoDB Atlas connection resilience, JWT HttpOnly cookies, RBAC role separation, Socket.IO handshake, Duplicate Radar similarity, Status History lifecycle, Campus Hotspots, Command Center analytics, room isolation, alerts, and CRUD).*
-2. **Start Dev Servers (if running locally):**
+   *(Executes **99/99 passing tests**: verifies MongoDB Atlas connectivity, JWT HttpOnly cookie authentication, RBAC boundaries for Student, Staff, and Admin, Socket.IO authenticated handshakes, Duplicate Radar, 11 default seeded departments, staff account creation & work queues, 3-tier visibility enforcement, confidential 404 security checks, department redirection with history, public comments vs. internal staff notes, SLA deadline calculations, resolution verification and student reopen workflows, and audit trail logging).*
+
+2. **Start Dev Servers:**
    ```bash
    npm run dev
    ```
    - Server runs on `http://127.0.0.1:5000`
    - Client runs on `http://localhost:5173`
-3. **Accounts Prepared:**
+
+3. **Sample Accounts Prepared:**
    - **Student:** `alex.rivera@campus.edu` / `Password123!` (or register fresh via `/register`)
-   - **Admin:** `admin@campus.edu` / `AdminPass123!` (seeded via `npm run seed:admin`)
+   - **Staff Member:** Created via `/admin?view=staff` (e.g. `tech@campuspulse.edu` / `Password123!`)
+   - **Administrator:** `admin@campus.edu` / `AdminPass123!` (seeded via `npm run seed:admin`)
 
 ---
 
 ## ⏱️ Step-by-Step Live Demo Script
 
-```
-+-----------------------------------+-----------------------------------+
-|     LEFT WINDOW (Student View)     |      RIGHT WINDOW (Admin View)    |
-|   Logged in as: Alex Rivera       |   Logged in as: Campus Admin      |
-|   Layout: AppLayout (Student Mode)|   Layout: AdminLayout (Admin Mode)|
-+-----------------------------------+-----------------------------------+
-```
-
-### Minute 0:00 – 0:45 | Strict Role Separation & Architecture
-1. **Explain the Dual-Mode Role Architecture:**
-   > *"CampusPulse features two completely distinct role-based experiences: **Student Mode** for reporting, tracking, and peer affirmation, and **Admin Mode** for facilities dispatch, queue review, and emergency alert approval."*
-2. **Demonstrate Navigation Isolation:**
-   - **In Left Window (Student):**
-     - Point to the student sidebar: only displays **Campus Feed**, **Report Issue**, **My Reports**, and **Notifications**.
-     - Notice: **Zero administrative links or controls exist**.
-   - **In Right Window (Admin):**
-     - Point to the admin sidebar: only displays **Admin Overview**, **Issue Review Queue**, **Campus Alert Management**, and **Sign Out**.
-     - Notice: **Zero student features exist** (no feed, no report form, no personal reports).
-3. **Demonstrate Role Boundary Enforcement (Direct URL Manipulation):**
-   - In Right Window (Admin), type `/` or `/issues/new` in the address bar and press Enter:
-     - The browser **immediately redirects back to `/admin`**. Admins cannot access student reporting or feeds.
-   - In Left Window (Student), type `/admin` in the address bar:
-     - The system renders a clean **Access Denied** security boundary, explaining that the current user has the Student role.
-   - Mention: This is enforced at both the React Router boundary and on the backend (`requireAdmin` and `requireStudent` middleware return HTTP 403 Forbidden).
+### Minute 0:00 – 0:45 | Strict Role Separation & Multi-Tier Architecture
+1. **Explain the 3-Role Operational Architecture:**
+   > *"CampusPulse 2.0 features three distinct operational tiers: **Student Mode** for reporting campus issues and tracking personal tickets, **Department Staff Mode** (`/staff`) for maintenance crews and technicians working on assigned queues, and **Administrator Command Center** (`/admin`) for routing, department management, and SLA enforcement."*
+2. **Demonstrate Route Guards & Privacy Boundaries:**
+   - In Student Window, navigate to `/staff` or `/admin`:
+     - Result: Instantly intercepted by `StaffRouteGuard` or `AdminRouteGuard` with clear security notices.
+   - In Staff Window, navigate to `/issues/new` or `/admin`:
+     - Result: Staff members are guided directly to their work-queue (`/staff`).
+   - In Admin Window, navigate to `/issues/new`:
+     - Result: Redirects back to `/admin` to preserve role separation.
 
 ---
 
-### Minute 0:45 – 1:30 | Duplicate Radar & Student Report Submission
-1. **In Left Window (Student):**
+### Minute 0:45 – 1:45 | Department-Aware Reporting & Confidentiality
+1. **In Window 1 (Student Mode):**
    - Click **"Report Issue"** (`/issues/new`).
-   - Start typing Title: `Water Leak`
-   - **Point out Duplicate Radar:** As you type, the amber **Duplicate Radar** suggestion box animates in, checking for active similar reports across campus without requiring external AI keys.
-   - Now specify full title: `Major Water Main Leak in Science Wing B`
-   - Description: `Main overhead pipe burst on 2nd floor corridor. Water spreading rapidly toward computer lab 204.`
-   - Category: `Plumbing & Water`
-   - Severity: `Critical`
-   - Campus Zone: `Labs & Research Center` (demonstrating standardized `CAMPUS_ZONES`).
-   - Location: Building: `Science Complex`, Area: `North Wing`, Floor: `Floor 2`, Room: `Corridor / Lab 204`.
-   - Toggle **"Request Campus-Wide Alert"** ON.
-   - *(Optional)* Attach an image (demonstrating Cloudinary multi-part upload).
+   - Title: `Persistent High-Voltage Arc in Transformer Room`
+   - Category: `Electrical & Power`
+   - Suggested Department: `Electrical & Power` (demonstrates dynamic department dropdown).
+   - Visibility: Select **"Confidential (Sensitive)"** or **"Department Only"**.
+   - Explain: *"When a report is flagged as Confidential, it is strictly omitted from the public campus feed and duplicate radar. It is visible ONLY to the reporter, administrators, and the assigned technician."*
    - Click **"Submit Report"**.
-2. **Immediate Real-time Synchronization:**
-   - The student's screen transitions to the new issue detail page.
-   - **LOOK AT RIGHT WINDOW (Admin Command Center):** Without refreshing the page, the 7-day velocity chart increments, the review queue table receives the new row, and the `Labs & Research Center` Hotspot card updates with an incremented recurrence score!
+2. **In Window 2 (Another Student / Unrelated Account):**
+   - Try to access the direct URL of the confidential issue:
+     - Result: Returns an HTTP 404 Not Found. The server completely masks the existence of the ticket from unauthorized students.
 
 ---
 
-### Minute 1:30 – 2:30 | Admin Command Center, Hotspots & Alert Approval
-1. **In Right Window (Admin Command Center):**
-   - **Demonstrate Click-to-Filter KPI Cards:** Click on the `Pending Review` or `Critical` card to filter the review table instantly with one click.
-   - **Demonstrate Campus Hotspots:** Show the `Labs & Research Center` hotspot card with its computed recurrence score. Click **"Drill Down Zone"** to filter all tickets in that zone.
-   - In the review queue, click **"Verify Report"** on the newly submitted issue.
-   - Check **"Approve Official Campus-Wide Alert"**.
-   - Enter Administrator Note: `Facilities emergency plumbing team dispatched. Electrical mains in Wing B isolated for safety.`
-   - Click **"Confirm Verify"**.
-2. **Watch Real-Time Reactive Propagation:**
-   - **LOOK AT LEFT WINDOW (Student Feed):**
-     - Instantly, a high-priority red **Campus Alert Banner** animates onto the top of the feed.
-     - The issue card status updates live from `Reported` to `Verified`.
-   - **LOOK AT STUDENT HEADER:**
-     - The notification bell updates with a live badge (+1).
-     - Click **Notifications** (`/notifications`): An official alert card reads:  
-       `🚨 Official Campus-Wide Alert Issued: An urgent alert regarding "Major Water Main Leak..."`
+### Minute 1:45 – 2:45 | Admin Command Center, Department Routing & SLA Deadlines
+1. **In Window 3 (Admin Mode):**
+   - View `/admin`:
+     - Notice the new report appeared immediately via Socket.IO live sync.
+     - Review Queue displays the **Confidential** badge and **Electrical & Power** department pill.
+   - Click **"Manage & Assign"** on the ticket to open the dedicated **Admin Issue Details View**:
+     - **Department Routing Panel:** Assign issue to `Electrical & Power` and select the designated staff member (`Tech Specialist`).
+     - **SLA Deadlines Panel:** Set priority to `High`, configure target resolution deadline (e.g. 24 hours), and enter reason: `Requires emergency certified electrician`.
+     - Click **"Save Assignment"**.
+   - **Show Assignment History Timeline:**
+     - The bottom timeline records: `Action: Assigned | Previous: None | New: Electrical & Power | Assignee: Tech Specialist | Changed By: Admin`.
+   - **Demonstrate Redirection:**
+     - Click **"Redirect Department"** to simulate an operational misroute (e.g. to `IT Services`).
+     - Explain how the system clears incompatible technicians to maintain accountability, recording a second entry in the immutable assignment history.
 
 ---
 
-### Minute 2:30 – 3:30 | Peer Affirmation, Lifecycle Audit Trail & Dispatch
-1. **In Left Window (Student):**
-   - Click on the issue card to open **Issue Details** (`/issues/:id`).
-   - **Point out Status History Timeline:** Notice the visual step progression bar (`Reported` → `Verified`) and the chronological event audit trail recording the admin's name, timestamp, and resolution note.
-   - Click **"Affects Me Too"**:
-     - Counter increments from `0` to `1` in real-time.
-   - Under Discussion, post a comment: `Water is now dripping into ground floor lecture hall 102.`
-2. **In Right Window (Admin Mode):**
-   - In the review queue, click **"Details"** (`/admin/issues/:id`):
-     - Opens the dedicated **Admin Issue Details View** with the persistent `StatusHistoryTimeline`, photographic evidence, and discussion thread audit.
-     - Point out: **Admins cannot click "Affects Me Too"** (it is a student-only affirmation).
-3. **Dispatch Maintenance & Resolve:**
-   - On the Admin Issue Details page, click **"Dispatch Maintenance (In Progress)"** with note: `Contractor plumbing squad on-site with submersible pumps.`
-   - Left Window timeline animates live to orange `In Progress` with a third entry in the audit trail.
-   - Click **"Mark Issue Resolved"** with resolution note: `Pipe replaced and pressure tested. All corridors dried and cleared for access.`
-   - Status transitions to green `Resolved`, and the alert banner disappears from active student feeds.
+### Minute 2:45 – 3:45 | Staff Work-Queue, Internal Notes & Official Resolution
+1. **In Window 2 (Staff Mode - `/staff`):**
+   - Notice the ticket is now in the technician's **Assigned to Me** queue with its priority and SLA target countdown.
+   - Click **"Triage & Actions"**:
+     - Staff member can transition status to `In Progress` or `Awaiting Student Info`.
+   - **Post an Internal Staff Note:**
+     - Under Discussion, enter: `Breaker tripped on secondary circuit. Ordered 400A replacement fuse from supplier.`
+     - Toggle **"Internal Staff Note"** ON and post.
+     - The note displays with distinct amber triage styling.
+2. **In Window 1 (Student View):**
+   - Refresh or view discussion on the ticket:
+     - The student **cannot see** the internal technician note.
+     - Only official public comments are displayed.
 
 ---
 
-### Minute 3:30 – 4:15 | Technical Architecture & Viva Defense
-Conclude with these key points:
-- **Strict Role Separation:** Frontend layouts (`AppLayout` vs `AdminLayout`) and route guards prevent accidental interface overlap. Backend middleware (`requireAdmin`, `requireStudent`) guarantees API security.
-- **Session Restoration:** Upon browser refresh, `/api/auth/me` restores user credentials; guards ensure admins stay in `/admin` and students stay in `/` without UI flashing.
-- **Single-Origin Deployment:** Express serves the compiled React client as a single origin (`client/dist`), with SPA routing fallback for client routes while preserving strict JSON 404 responses for invalid `/api/*` requests.
+### Minute 3:45 – 4:30 | Resolution Verification, Student Reopen & Audit Trail
+1. **Technician/Admin Marks Resolved:**
+   - In Staff or Admin view, click **"Mark Resolved"** with resolution note: `New 400A fuse installed and load tested at 100% capacity.`
+   - Ticket moves to `Resolved` status.
+2. **Student Verification & Reopen Workflow:**
+   - In Student window, the ticket shows green `Resolved` with resolution details.
+   - Suppose the issue recurs: Student clicks **"Reopen Issue"**:
+     - Modal demands a mandatory explanation (minimum 10 characters).
+     - Enter reason: `Power tripped again immediately when lab machinery turned on.`
+     - Submit: Issue status automatically shifts back to `In Progress`, incrementing `reopenCount` to `1`.
+3. **Inspect the System Audit Trail:**
+   - In Admin view, navigate to `/admin?view=audit`:
+     - Full chronological audit log displaying every action (`issue_created`, `issue_assigned`, `issue_redirected`, `status_changed`, `issue_reopened`) with the responsible actor's role, timestamps, and justification context.
 
 ---
 
 ## 🎯 Viva Q&A Cheat Sheet (Evaluator Questions)
 
-### Q1: How do you prevent an administrator from creating student reports or using "Affects Me Too"?
-> **Answer:** We enforce role separation at the backend level using `requireStudent` middleware on `POST /api/issues`, `POST /api/issues/:id/confirm`, and `GET /api/issues/mine`. If an admin attempts to invoke these endpoints using their JWT cookie, the server rejects the request with HTTP 403 Forbidden. On the frontend, `StudentRouteGuard` automatically redirects any logged-in administrator away from student reporting screens to `/admin`.
+### Q1: How does CampusPulse enforce ticket confidentiality across different APIs?
+> **Answer:** Confidentiality is enforced through a centralized `canUserViewIssue(issue, user)` helper invoked on every route (feed, search, details, comments, and Socket.IO subscriptions). If an issue has `visibility === 'confidential'`, only the creator, administrators, and the assigned staff member (`assignedTo`) can access it. For all other users, the API returns a standard 404 to avoid leaking the ticket's existence. Furthermore, confidential tickets are excluded from public Socket broadcasts and Duplicate Radar.
 
-### Q2: How do you prevent students from accessing administrative queues or actions?
-> **Answer:** All `/api/admin/*` routes are protected by `requireAdmin` middleware, which decodes the JWT and validates that `req.user.role === 'admin'`. Students receive HTTP 403 Forbidden. On the frontend, `AdminRouteGuard` intercepts students navigating to `/admin` or `/admin/*` and renders a clear "Access Denied" view without exposing admin statistics or queue data.
+### Q2: What prevents staff members from modifying issues outside their department?
+> **Answer:** `staffController.updateStaffIssueStatus` enforces that the requesting staff member is either explicitly assigned to the ticket (`assignedTo`) or belongs to the department currently responsible for the issue (`department`). Unauthorized modification attempts return an HTTP 403 Forbidden.
 
-### Q3: What happens when an admin refreshes the page? Is there a flash of student feed?
-> **Answer:** No. While `/api/auth/me` is running on page load, `loading` is set to `true`. Both `StudentRouteGuard` and `AdminRouteGuard` render an accessible loading spinner while the session restores. Once the user's role is confirmed as `admin`, the router keeps them inside `AdminLayout` without any flash of student navigation.
+### Q3: How do you prevent internal staff notes from leaking to students?
+> **Answer:** Comments have a boolean flag `isInternal` and visibility `internal`. On the backend, `commentController.getComments` inspects `req.user.role`. If the user is a student, the query filter automatically adds `{ isInternal: { $ne: true } }`. In addition, `createComment` strictly rejects students attempting to post internal notes with an HTTP 403 error.
 
-### Q4: Why use HttpOnly cookies for JWT instead of localStorage?
-> **Answer:** `localStorage` is accessible to client-side JavaScript, leaving sessions vulnerable to Cross-Site Scripting (XSS). HttpOnly cookies cannot be read by `document.cookie`, preventing token exfiltration even in the presence of an XSS vulnerability. Combined with `SameSite: Lax`, this provides robust protection against CSRF and credential theft.
+### Q4: How is the SLA deadline tracked and calculated?
+> **Answer:** Each issue stores `responseDeadline` and `resolutionDeadline`. `adminController.js` and `staffController.js` dynamically compute `isOverdue: true` when `resolutionDeadline < new Date()` for tickets not yet resolved or rejected. This powers the "Overdue SLA" filter cards across both the Admin Command Center and Staff Work Queues.
 
-### Q5: How is Socket.IO authenticated and partitioned?
-> **Answer:** Sockets authenticate during the WebSocket handshake by reading the HttpOnly `token` cookie directly from `socket.request.headers.cookie`. We use three isolated room layers: `user:<userId>` for personal notifications, `role:admin` for operations staff alerts, and `issue:<issueId>` for thread discussions.
+### Q5: How is the audit trail secured?
+> **Answer:** The `AuditEvent` collection is an append-only log. Every administrative assignment, department redirection, priority update, and resolution writes an immutable record with the actor's ObjectId, action name, target entity, timestamp, and details diff. No delete or update endpoints exist for the audit log.

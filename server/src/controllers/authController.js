@@ -59,7 +59,9 @@ export const register = async (req, res, next) => {
       email: normalizedEmail,
       passwordHash,
       role: 'student', // Never trust role from client body
-      department: department ? department.trim() : '',
+      department: null,
+      departmentName: department ? department.trim() : '',
+      isActive: true,
     });
 
     // 4. Generate JWT & Set HttpOnly cookie
@@ -120,7 +122,15 @@ export const login = async (req, res, next) => {
       });
     }
 
-    // 4. Issue JWT and set HttpOnly cookie
+    // 4. Verify account active state
+    if (user.isActive === false) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'Your account has been deactivated. Please contact an administrator.',
+      });
+    }
+
+    // 5. Issue JWT and set HttpOnly cookie
     const token = generateToken(user);
     setAuthCookie(res, token);
 

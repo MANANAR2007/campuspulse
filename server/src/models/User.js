@@ -32,16 +32,27 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: {
-        values: ['student', 'admin'],
-        message: 'Role must be either student or admin',
+        values: ['student', 'admin', 'staff'],
+        message: 'Role must be student, admin, or staff',
       },
       default: 'student',
     },
     department: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Department',
+      default: null,
+      index: true,
+    },
+    departmentName: {
       type: String,
       trim: true,
       maxlength: [100, 'Department name cannot exceed 100 characters'],
       default: '',
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
     },
   },
   {

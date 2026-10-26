@@ -51,9 +51,11 @@ export default function LoginPage() {
       // Role-based login redirection
       if (loggedUser && loggedUser.role === 'admin') {
         navigate('/admin', { replace: true });
+      } else if (loggedUser && loggedUser.role === 'staff') {
+        navigate('/staff', { replace: true });
       } else {
         const returnPath = location.state?.from?.pathname;
-        if (returnPath && !returnPath.startsWith('/admin') && returnPath !== '/login') {
+        if (returnPath && !returnPath.startsWith('/admin') && !returnPath.startsWith('/staff') && returnPath !== '/login') {
           navigate(returnPath, { replace: true });
         } else {
           navigate('/', { replace: true });

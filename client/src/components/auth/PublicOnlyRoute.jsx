@@ -23,6 +23,9 @@ export default function PublicOnlyRoute({ children }) {
     if (user.role === 'admin') {
       return <Navigate to="/admin" replace />;
     }
+    if (user.role === 'staff') {
+      return <Navigate to="/staff" replace />;
+    }
     return <Navigate to="/" replace />;
   }
 

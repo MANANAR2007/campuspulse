@@ -6,11 +6,13 @@ import { SocketProvider } from './context/SocketContext.jsx';
 // Layouts
 import AppLayout from './components/layout/AppLayout.jsx';
 import AdminLayout from './components/layout/AdminLayout.jsx';
+import StaffLayout from './components/layout/StaffLayout.jsx';
 
 // Guards
 import ProtectedRoute from './components/auth/ProtectedRoute.jsx';
 import PublicOnlyRoute from './components/auth/PublicOnlyRoute.jsx';
 import AdminRouteGuard from './components/auth/AdminRouteGuard.jsx';
+import StaffRouteGuard from './components/auth/StaffRouteGuard.jsx';
 import StudentRouteGuard from './components/auth/StudentRouteGuard.jsx';
 
 // Pages
@@ -23,6 +25,7 @@ import MyReportsPage from './pages/MyReportsPage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
 import AdminDashboardPage from './pages/AdminDashboardPage.jsx';
 import AdminIssueDetailsPage from './pages/AdminIssueDetailsPage.jsx';
+import StaffDashboardPage from './pages/StaffDashboardPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 export default function App() {
@@ -59,6 +62,18 @@ export default function App() {
           >
             <Route index element={<AdminDashboardPage />} />
             <Route path="issues/:id" element={<AdminIssueDetailsPage />} />
+          </Route>
+
+          {/* Department Staff Operations Routes */}
+          <Route
+            path="staff"
+            element={
+              <StaffRouteGuard>
+                <StaffLayout />
+              </StaffRouteGuard>
+            }
+          >
+            <Route index element={<StaffDashboardPage />} />
           </Route>
 
           {/* Student Mode Routes (Protected by StudentRouteGuard: Admins are redirected to /admin) */}

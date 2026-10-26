@@ -22,6 +22,8 @@ import User from '../models/User.js';
 import Issue from '../models/Issue.js';
 import Comment from '../models/Comment.js';
 import Notification from '../models/Notification.js';
+import Department, { ensureDefaultDepartments } from '../models/Department.js';
+import AuditEvent from '../models/AuditEvent.js';
 
 const TEST_PORT = 5098;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -82,6 +84,7 @@ async function runTests() {
     }
     const httpServer = http.createServer(app);
     ioInstance = initSocket(httpServer);
+    await ensureDefaultDepartments();
 
     await new Promise((resolve) => {
       serverInstance = httpServer.listen(TEST_PORT, '127.0.0.1', resolve);
@@ -90,7 +93,8 @@ async function runTests() {
 
     // Clean up any stale test accounts from previous runs
     const testEmail = `test_student_${Date.now()}@campus.edu`;
-    await User.deleteMany({ email: { $regex: /^test_student_/ } });
+    await User.deleteMany({ email: { $regex: /^(test_student_|test_staff_|student2_)/ } });
+    await Department.deleteMany({ code: { $regex: /^ROBOT_/ } });
 
     // 1. Health Check Endpoint
     console.log(`\n${cyan('2. Verifying Health & System Endpoints...')}`);
@@ -632,8 +636,320 @@ async function runTests() {
     );
     assert(hasApprovedAlert, 'Approved alert is returned in public REST alerts feed');
 
-    // 12. Verifying Session Logout & Cookie Invalidation
-    console.log(`\n${cyan('13. Verifying Session Logout & Cookie Invalidation...')}`);
+    // 13. Operational Department Management & Default Seeding
+    console.log(`\n${cyan('13. Verifying Operational Department Routing & Seeding...')}`);
+    const deptsRes = await fetch(`${BASE_URL}/api/departments`);
+    const deptsData = await deptsRes.json();
+    assert(deptsRes.status === 200, 'GET /api/departments returns HTTP 200');
+    assert(
+      deptsData.data?.departments?.length >= 5,
+      'Database contains pre-seeded operational campus departments'
+    );
+
+    // Admin creates a custom department
+    const deptSuffix = Date.now().toString().slice(-4);
+    const newDeptRes = await fetch(`${BASE_URL}/api/departments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        name: `Robotics & Automation Lab ${deptSuffix}`,
+        code: `ROBOT_${deptSuffix}`,
+        description: 'Robotics facility and smart manufacturing labs',
+      }),
+    });
+    const newDeptData = await newDeptRes.json();
+    assert(newDeptRes.status === 201, 'Admin POST /api/departments returns HTTP 201 Created');
+    const testDeptId = newDeptData.data.department.id || newDeptData.data.department._id;
+
+    // Student attempting to create department is forbidden
+    const studentDeptRes = await fetch(`${BASE_URL}/api/departments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: studentCookie,
+      },
+      body: JSON.stringify({
+        name: 'Unauthorized Student Department',
+        code: 'HACK',
+      }),
+    });
+    assert(studentDeptRes.status === 403, 'Student attempting to create department returns HTTP 403 Forbidden');
+
+    // 14. Staff Provisioning & Role Guarding
+    console.log(`\n${cyan('14. Verifying Staff Account Provisioning & Work Queue RBAC...')}`);
+    const staffEmail = `test_staff_${Date.now()}@campuspulse.edu`;
+    const createStaffRes = await fetch(`${BASE_URL}/api/admin/staff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        name: 'Lab Specialist Tech',
+        email: staffEmail,
+        password: 'password123',
+        departmentId: testDeptId,
+      }),
+    });
+    const createStaffData = await createStaffRes.json();
+    if (createStaffRes.status !== 201) {
+      console.log('DEBUG createStaffRes:', createStaffRes.status, createStaffData);
+    }
+    assert(createStaffRes.status === 201, 'Admin POST /api/admin/staff returns HTTP 201');
+    const testStaffId = createStaffData.data.user?._id || createStaffData.data.staff?._id || createStaffData.data.user?.id;
+
+    // Staff login
+    const staffLoginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: staffEmail,
+        password: 'password123',
+      }),
+    });
+    const staffLoginData = await staffLoginRes.json();
+    assert(staffLoginRes.status === 200, 'Staff login returns HTTP 200');
+    assert((staffLoginData.user || staffLoginData.data?.user)?.role === 'staff', 'Staff user has "staff" role');
+    const staffCookie = extractCookie(staffLoginRes);
+
+    // Staff accesses /api/staff/queue
+    const staffQueueRes = await fetch(`${BASE_URL}/api/staff/queue`, {
+      headers: { Cookie: staffCookie },
+    });
+    assert(staffQueueRes.status === 200, 'Staff accesses GET /api/staff/queue returns HTTP 200');
+
+    // Student forbidden from /api/staff/queue
+    const studentQueueRes = await fetch(`${BASE_URL}/api/staff/queue`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert(studentQueueRes.status === 403, 'Student accessing GET /api/staff/queue returns HTTP 403 Forbidden');
+
+    // 15. Confidentiality & Visibility Enforcement
+    console.log(`\n${cyan('15. Verifying Confidentiality & Visibility Enforcement...')}`);
+    const student2Email = `student2_${Date.now()}@campus.edu`;
+    const student2RegisterRes = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Second Student',
+        email: student2Email,
+        password: 'password123',
+        studentId: 'STU999888',
+      }),
+    });
+    const student2Cookie = extractCookie(student2RegisterRes);
+
+    // Student 1 reports a confidential issue
+    const confIssueRes = await fetch(`${BASE_URL}/api/issues`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: studentCookie,
+      },
+      body: JSON.stringify({
+        title: 'Confidential Safety Complaint in Dormitory',
+        description: 'Sensitive private matter that must not be public on feed.',
+        category: 'safety',
+        severity: 'high',
+        visibility: 'confidential',
+        location: {
+          building: 'Hostel Block C',
+          campusZone: 'hostels',
+        },
+      }),
+    });
+    const confIssueData = await confIssueRes.json();
+    assert(confIssueRes.status === 201, 'Student creates confidential issue returns HTTP 201');
+    const confIssueId = confIssueData.data.issue.id || confIssueData.data.issue._id;
+    assert(confIssueData.data.issue.visibility === 'confidential', 'Issue created with visibility="confidential"');
+
+    // Student 2 tries to access confidential issue directly -> 404 (strictly hidden)
+    const student2ConfRes = await fetch(`${BASE_URL}/api/issues/${confIssueId}`, {
+      headers: { Cookie: student2Cookie },
+    });
+    assert(student2ConfRes.status === 404, 'Unrelated student accessing confidential issue returns HTTP 404 Not Found');
+
+    // Reporter student accesses confidential issue -> 200
+    const reporterConfRes = await fetch(`${BASE_URL}/api/issues/${confIssueId}`, {
+      headers: { Cookie: studentCookie },
+    });
+    assert(reporterConfRes.status === 200, 'Author student accessing confidential issue returns HTTP 200');
+
+    // Admin accesses confidential issue -> 200
+    const adminConfRes = await fetch(`${BASE_URL}/api/issues/${confIssueId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    assert(adminConfRes.status === 200, 'Admin accessing confidential issue returns HTTP 200');
+
+    // 16. Department Issue Assignment & Redirection with Audit History
+    console.log(`\n${cyan('16. Verifying Department Assignment & Redirection with Audit History...')}`);
+    const assignRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}/assign`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        departmentId: testDeptId,
+        staffId: testStaffId,
+        reason: 'Specialized lab robotics equipment requires department technician',
+      }),
+    });
+    const assignData = await assignRes.json();
+    assert(assignRes.status === 200, 'Admin assigns issue to department & staff returns HTTP 200');
+    assert(assignData.data.issue.assignmentHistory.length >= 1, 'Issue records assignment in assignmentHistory');
+    assert(
+      assignData.data.issue.assignmentHistory[0].action === 'assigned',
+      'First assignment history entry has action="assigned"'
+    );
+
+    // Redirect to another department
+    const depts = deptsData.data.departments;
+    const secondDept = depts.find((d) => (d.id || d._id) !== testDeptId) || depts[0];
+    const redirectRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}/redirect`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        departmentId: secondDept.id || secondDept._id,
+        reason: 'Routing correction: issue pertains to facility infrastructure, not robotics',
+      }),
+    });
+    const redirectData = await redirectRes.json();
+    assert(redirectRes.status === 200, 'Admin redirects issue to another department returns HTTP 200');
+    assert(
+      redirectData.data.issue.assignmentHistory.length >= 2,
+      'Assignment history tracks redirection as second entry'
+    );
+    assert(
+      redirectData.data.issue.assignedTo === null,
+      'Incompatible previous staff assignee cleared upon department redirection'
+    );
+
+    // 17. Public Comments vs. Internal Staff Notes
+    console.log(`\n${cyan('17. Verifying Public Comments vs. Internal Staff Notes...')}`);
+    const studentInternalNoteRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}/comments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: studentCookie,
+      },
+      body: JSON.stringify({
+        text: 'Attempted internal note by student',
+        isInternal: true,
+      }),
+    });
+    assert(studentInternalNoteRes.status === 403, 'Student posting internal staff note returns HTTP 403 Forbidden');
+
+    // Admin posts internal triage note
+    const staffInternalNoteRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}/comments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        text: 'Internal triage note: vendor contacted for replacement switchboard',
+        isInternal: true,
+      }),
+    });
+    assert(staffInternalNoteRes.status === 201, 'Staff/Admin posting internal note returns HTTP 201 Created');
+
+    // Student queries comments -> internal note is filtered out
+    const studentCommentsRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}/comments`, {
+      headers: { Cookie: studentCookie },
+    });
+    const studentCommentsData = await studentCommentsRes.json();
+    assert(studentCommentsRes.status === 200, 'Student queries comments returns HTTP 200');
+    const studentSeesInternal = studentCommentsData.data.comments.some((c) => c.isInternal);
+    assert(!studentSeesInternal, 'Internal staff note is excluded from student comment queries');
+
+    // Admin queries comments -> internal note is visible
+    const adminCommentsRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}/comments`, {
+      headers: { Cookie: adminCookie },
+    });
+    const adminCommentsData = await adminCommentsRes.json();
+    const adminSeesInternal = adminCommentsData.data.comments.some((c) => c.isInternal);
+    assert(adminSeesInternal, 'Internal staff note is included in admin comment queries');
+
+    // 18. SLA Priority, Deadlines, and Resolution Reopen Workflow
+    console.log(`\n${cyan('18. Verifying SLA Priority, Deadlines & Student Reopen Workflow...')}`);
+    const targetDeadline = new Date(Date.now() + 86400000).toISOString();
+    const slaRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}/priority-deadline`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        priority: 'high',
+        resolutionDeadline: targetDeadline,
+        reason: 'SLA target established following equipment delivery schedule',
+      }),
+    });
+    assert(slaRes.status === 200, 'POST /api/admin/issues/:id/priority-deadline returns HTTP 200');
+
+    // Transition to resolved
+    const resolveRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        status: 'resolved',
+        resolutionNote: 'Main breaker reset and tested successfully under full load.',
+      }),
+    });
+    assert(resolveRes.status === 200, 'Issue transitioned to resolved returns HTTP 200');
+
+    // Second student attempts to reopen -> 403 Forbidden
+    const student2ReopenRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}/reopen`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: student2Cookie,
+      },
+      body: JSON.stringify({
+        reason: 'Reopen attempt by non-author student',
+      }),
+    });
+    assert(student2ReopenRes.status === 403, 'Non-author student attempting to reopen issue returns HTTP 403 Forbidden');
+
+    // Reporter student reopens issue with required reason (>= 10 chars)
+    const reporterReopenRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}/reopen`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: studentCookie,
+      },
+      body: JSON.stringify({
+        reason: 'Power failed again immediately when class started this morning.',
+      }),
+    });
+    const reporterReopenData = await reporterReopenRes.json();
+    assert(reporterReopenRes.status === 200, 'Reporter student reopens issue returns HTTP 200');
+    assert(reporterReopenData.data.issue.status === 'in_progress', 'Reopened issue status transitions to "in_progress"');
+    assert(reporterReopenData.data.issue.reopenCount === 1, 'Issue reopenCount increments to 1');
+
+    // 19. System Audit Trail Logging
+    console.log(`\n${cyan('19. Verifying Administrative Audit Trail...')}`);
+    const auditRes = await fetch(`${BASE_URL}/api/admin/audit-logs`, {
+      headers: { Cookie: adminCookie },
+    });
+    const auditData = await auditRes.json();
+    assert(auditRes.status === 200, 'GET /api/admin/audit-logs returns HTTP 200');
+    assert(auditData.data?.logs?.length > 0, 'Audit trail contains recorded administrative events');
+    const hasAssignAudit = auditData.data.logs.some((l) => l.action === 'issue_assigned' || l.action === 'issue_redirected');
+    assert(hasAssignAudit, 'Audit trail logs "issue_assigned" or "issue_redirected" action with actor and reason');
+
+    // 20. Verifying Session Logout & Cookie Invalidation
+    console.log(`\n${cyan('20. Verifying Session Logout & Cookie Invalidation...')}`);
     const logoutRes = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: 'POST',
       headers: { Cookie: studentCookie },
@@ -650,16 +966,26 @@ async function runTests() {
     studentSocket.disconnect();
     adminSocket.disconnect();
 
-    // 13. Cleanup
-    console.log(`\n${cyan('14. Cleaning up Test Artifacts...')}`);
+    // 21. Cleanup
+    console.log(`\n${cyan('21. Cleaning up Test Artifacts...')}`);
     if (testIssueId) {
       await Issue.findByIdAndDelete(testIssueId);
       await Comment.deleteMany({ issueId: testIssueId });
       await Notification.deleteMany({ issueId: testIssueId });
     }
+    if (confIssueId) {
+      await Issue.findByIdAndDelete(confIssueId);
+      await Comment.deleteMany({ issueId: confIssueId });
+    }
+    if (testDeptId) {
+      await Department.findByIdAndDelete(testDeptId);
+    }
     if (testStudentUser && testStudentUser.id) {
       await User.findByIdAndDelete(testStudentUser.id);
     }
+    await User.deleteMany({ email: { $in: [staffEmail, student2Email] } });
+    await AuditEvent.deleteMany({ entityId: { $in: [testIssueId, confIssueId, testDeptId] } });
+
     console.log(`  ${green('Test records cleaned up successfully.')}`);
 
     console.log(`\n${bold('========================================================')}`);

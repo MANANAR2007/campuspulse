@@ -17,7 +17,7 @@ import {
   Radar,
   ExternalLink,
 } from 'lucide-react';
-import { issuesAPI, CAMPUS_ZONES } from '../services/api.js';
+import { issuesAPI, departmentsAPI, CAMPUS_ZONES, ISSUE_VISIBILITIES } from '../services/api.js';
 import SeverityBadge from '../components/common/SeverityBadge.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
 
@@ -49,6 +49,8 @@ export default function NewIssuePage() {
     title: '',
     category: 'infrastructure',
     severity: 'moderate',
+    visibility: 'public',
+    department: '',
     campusZone: 'academic_blocks',
     building: '',
     area: '',
@@ -57,6 +59,17 @@ export default function NewIssuePage() {
     description: '',
     campusAlertRequested: false,
   });
+
+  const [departments, setDepartments] = useState([]);
+
+  useEffect(() => {
+    departmentsAPI
+      .getAll()
+      .then((res) => {
+        if (res?.data?.departments) setDepartments(res.data.departments);
+      })
+      .catch(() => {});
+  }, []);
 
   // Duplicate Radar states
   const [duplicateMatches, setDuplicateMatches] = useState([]);
@@ -214,6 +227,10 @@ export default function NewIssuePage() {
         multipartData.append('description', formData.description.trim());
         multipartData.append('category', formData.category);
         multipartData.append('severity', formData.severity);
+        multipartData.append('visibility', formData.visibility);
+        if (formData.department) {
+          multipartData.append('department', formData.department);
+        }
         multipartData.append(
           'location',
           JSON.stringify({
@@ -238,6 +255,8 @@ export default function NewIssuePage() {
           description: formData.description.trim(),
           category: formData.category,
           severity: formData.severity,
+          visibility: formData.visibility,
+          department: formData.department || undefined,
           location: {
             building: formData.building.trim(),
             campusZone: formData.campusZone,
@@ -446,6 +465,67 @@ export default function NewIssuePage() {
                 );
               })}
             </div>
+          </div>
+        </div>
+
+        {/* Privacy & Department Classification */}
+        <div className="space-y-3 pt-2">
+          <div>
+            <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+              Report Visibility & Privacy *
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {ISSUE_VISIBILITIES.map((vis) => {
+                const isSelected = formData.visibility === vis.value;
+                return (
+                  <button
+                    key={vis.value}
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => setFormData({ ...formData, visibility: vis.value })}
+                    className={`p-3 rounded-xl border text-left transition-all ${
+                      isSelected
+                        ? 'border-blue-600 bg-blue-50/60 ring-2 ring-blue-500/20 shadow-xs'
+                        : 'border-slate-200 bg-slate-50 hover:bg-slate-100/80 text-slate-600'
+                    }`}
+                  >
+                    <span className="block font-bold text-xs text-slate-900 mb-0.5">
+                      {vis.label}
+                    </span>
+                    <span className="block text-[11px] text-slate-500 leading-snug">
+                      {vis.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Suggested Department */}
+          <div>
+            <label
+              htmlFor="issue-department"
+              className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5"
+            >
+              Responsible Campus Department (Optional)
+            </label>
+            <select
+              id="issue-department"
+              disabled={isSubmitting}
+              value={formData.department}
+              onChange={(e) => setFormData({ ...formData, department: e.target.value })}
+              className="w-full px-3.5 py-2.5 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all disabled:opacity-60"
+            >
+              <option value="">Let Campus Administration Route Automatically</option>
+              {departments.map((dept) => (
+                <option key={dept.id || dept._id} value={dept.id || dept._id}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-slate-400">
+              Campus operations will confirm or redirect routing to the specialized staff team.
+            </p>
           </div>
         </div>
 

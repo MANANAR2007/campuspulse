@@ -2,6 +2,7 @@ import http from 'http';
 import app from './app.js';
 import { config } from './config/index.js';
 import { connectDB } from './config/db.js';
+import { ensureDefaultDepartments } from './models/Department.js';
 import { initSocket } from './utils/socket.js';
 
 const { port, host, nodeEnv } = config;
@@ -14,6 +15,7 @@ const startServer = async () => {
     // 1. Establish database connection before accepting traffic
     console.log('🔄 Connecting to MongoDB Atlas...');
     await connectDB();
+    await ensureDefaultDepartments();
 
     // 2. Create HTTP server and initialize authenticated Socket.IO
     const httpServer = http.createServer(app);

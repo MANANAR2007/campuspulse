@@ -7,6 +7,9 @@ import {
   Megaphone,
   LogOut,
   Shield,
+  Building2,
+  Users,
+  FileText,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.jsx';
 
@@ -37,10 +40,28 @@ export default function AdminSidebar({ isOpen, onClose }) {
       icon: FileCheck,
     },
     {
+      to: '/admin?view=departments',
+      viewKey: 'departments',
+      label: 'Departments & Routing',
+      icon: Building2,
+    },
+    {
+      to: '/admin?view=staff',
+      viewKey: 'staff',
+      label: 'Staff Accounts',
+      icon: Users,
+    },
+    {
       to: '/admin?view=alerts',
       viewKey: 'alerts',
       label: 'Campus Alert Management',
       icon: Megaphone,
+    },
+    {
+      to: '/admin?view=audit',
+      viewKey: 'audit',
+      label: 'System Audit Trail',
+      icon: FileText,
     },
   ];
 

@@ -68,11 +68,19 @@ export default function IssueDetailsPage() {
   const [comments, setComments] = useState([]);
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentText, setCommentText] = useState('');
+  const [isInternalComment, setIsInternalComment] = useState(false);
   const [commentSubmitting, setCommentSubmitting] = useState(false);
   const [commentError, setCommentError] = useState(null);
   const [editingCommentId, setEditingCommentId] = useState(null);
   const [editingCommentText, setEditingCommentText] = useState('');
   const [commentActionLoading, setCommentActionLoading] = useState(false);
+
+  // Reopen & Resolution verification states
+  const [reopenModalOpen, setReopenModalOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+  const [reopenLoading, setReopenLoading] = useState(false);
+  const [reopenError, setReopenError] = useState(null);
+  const [confirmResolutionLoading, setConfirmResolutionLoading] = useState(false);
 
   // Load Issue Details
   const fetchIssue = useCallback(async () => {
@@ -338,6 +346,44 @@ export default function IssueDetailsPage() {
     }
   };
 
+  // Reopen resolved issue
+  const handleReopenSubmit = async (e) => {
+    e.preventDefault();
+    if (!reopenReason || reopenReason.trim().length < 10) {
+      setReopenError('Please enter a clear reason (minimum 10 characters).');
+      return;
+    }
+    try {
+      setReopenLoading(true);
+      setReopenError(null);
+      const res = await issuesAPI.reopen(id, { reason: reopenReason.trim() });
+      if (res?.data?.issue) {
+        setIssue(res.data.issue);
+      }
+      setReopenModalOpen(false);
+      setReopenReason('');
+    } catch (err) {
+      setReopenError(err.message || 'Failed to reopen issue');
+    } finally {
+      setReopenLoading(false);
+    }
+  };
+
+  // Confirm resolution
+  const handleConfirmResolution = async () => {
+    try {
+      setConfirmResolutionLoading(true);
+      const res = await issuesAPI.confirmResolution(id, { feedback: 'Student confirmed issue is solved' });
+      if (res?.data?.issue) {
+        setIssue(res.data.issue);
+      }
+    } catch (err) {
+      alert(err.message || 'Failed to confirm resolution');
+    } finally {
+      setConfirmResolutionLoading(false);
+    }
+  };
+
   // Comment Handlers
   const handleCreateComment = async (e) => {
     e.preventDefault();
@@ -347,10 +393,14 @@ export default function IssueDetailsPage() {
     setCommentError(null);
 
     try {
-      const res = await commentsAPI.createComment(id, { text: commentText.trim() });
+      const res = await commentsAPI.createComment(id, {
+        text: commentText.trim(),
+        isInternal: isInternalComment,
+      });
       if (res?.data?.comment) {
         setComments((prev) => [...prev, res.data.comment]);
         setCommentText('');
+        setIsInternalComment(false);
       }
     } catch (err) {
       setCommentError(err.message || 'Failed to post comment.');
@@ -552,6 +602,29 @@ export default function IssueDetailsPage() {
               <SeverityBadge severity={issue.severity} size="sm" />
               <StatusBadge status={issue.status} size="sm" />
               <CategoryBadge category={issue.category} size="sm" />
+
+              {/* Visibility badge */}
+              {issue.visibility === 'confidential' && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-purple-100 text-purple-800 flex items-center gap-1">
+                  <Shield className="w-3 h-3" />
+                  Confidential
+                </span>
+              )}
+              {issue.visibility === 'department_only' && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-100 text-amber-800">
+                  Dept Only
+                </span>
+              )}
+              {issue.visibility === 'public' && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800">
+                  Public
+                </span>
+              )}
+              {issue.reopenCount > 0 && (
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800">
+                  Reopened ({issue.reopenCount})
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
@@ -588,6 +661,85 @@ export default function IssueDetailsPage() {
               </div>
             </div>
           </div>
+
+          {/* Operations Routing & SLA Details */}
+          {(issue.department || issue.assignedTo || issue.resolutionDeadline) && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 mt-3 border-t border-slate-100 text-xs bg-slate-50/70 p-3 rounded-xl">
+              <div>
+                <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                  Responsible Department
+                </span>
+                <span className="font-semibold text-slate-800">
+                  {issue.department?.name || 'Pending routing'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                  Assigned Specialist
+                </span>
+                <span className="font-semibold text-slate-800">
+                  {issue.assignedTo?.name || 'Department work queue'}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] font-bold uppercase tracking-wider">
+                  Target SLA Resolution
+                </span>
+                <span className="font-semibold text-slate-800">
+                  {issue.resolutionDeadline ? new Date(issue.resolutionDeadline).toLocaleDateString() : 'Standard campus turnaround'}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Resolution verification & dispute banner */}
+          {issue.status === 'resolved' && (
+            <div className="mt-4 p-4 rounded-xl border border-emerald-200 bg-emerald-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <strong className="block text-sm font-bold text-slate-900">
+                    {issue.reporterConfirmed ? 'Resolution Verified by Student' : 'Work Marked as Resolved'}
+                  </strong>
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    {issue.resolutionNote ? `Resolution Note: "${issue.resolutionNote}"` : 'Maintenance team marked this issue as complete.'}
+                  </p>
+                  {issue.reporterFeedback && (
+                    <p className="text-xs text-emerald-800 font-medium mt-1">
+                      Student feedback: "{issue.reporterFeedback}"
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Action buttons for reporter or admin */}
+              {(issue.createdBy?._id === user?._id || issue.createdBy?.id === user?.id || user?.role === 'admin') && (
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  {!issue.reporterConfirmed && (
+                    <button
+                      type="button"
+                      disabled={confirmResolutionLoading}
+                      onClick={handleConfirmResolution}
+                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors shadow-xs"
+                    >
+                      {confirmResolutionLoading ? 'Confirming...' : 'Confirm Fixed'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setReopenReason('');
+                      setReopenError(null);
+                      setReopenModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 transition-colors shadow-xs"
+                  >
+                    Reopen Issue
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Evidence Photo Section (Cloudinary) */}
@@ -687,6 +839,18 @@ export default function IssueDetailsPage() {
             </p>
           )}
 
+          {(user?.role === 'staff' || user?.role === 'admin') && (
+            <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-amber-800 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200 w-fit">
+              <input
+                type="checkbox"
+                checked={isInternalComment}
+                onChange={(e) => setIsInternalComment(e.target.checked)}
+                className="w-3.5 h-3.5 rounded text-amber-600 focus:ring-amber-500"
+              />
+              <span>Post as internal staff note (hidden from students)</span>
+            </label>
+          )}
+
           <div className="flex items-center justify-between text-xs">
             <span className="text-slate-400">
               {commentText.length}/1000 characters
@@ -756,6 +920,17 @@ export default function IssueDetailsPage() {
                       {comment.author?.role === 'admin' && (
                         <span className="text-[10px] font-semibold bg-purple-100 text-purple-700 px-1.5 py-0.2 rounded border border-purple-200">
                           Admin
+                        </span>
+                      )}
+                      {comment.author?.role === 'staff' && (
+                        <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded border border-amber-200">
+                          Staff {comment.author?.departmentName ? `(${comment.author.departmentName})` : ''}
+                        </span>
+                      )}
+                      {comment.isInternal && (
+                        <span className="text-[10px] font-semibold bg-rose-100 text-rose-800 px-1.5 py-0.2 rounded border border-rose-200 flex items-center gap-0.5">
+                          <Shield className="w-2.5 h-2.5" />
+                          Internal Note
                         </span>
                       )}
                     </div>
@@ -1107,6 +1282,61 @@ export default function IssueDetailsPage() {
               alt={`Evidence for ${issue.title}`}
               className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl"
             />
+          </div>
+        </div>
+      )}
+
+      {/* Reopen Issue Modal */}
+      {reopenModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              Reopen Resolved Issue
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              If the problem was not adequately fixed, please describe what remains unresolved.
+            </p>
+
+            {reopenError && (
+              <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800">
+                {reopenError}
+              </div>
+            )}
+
+            <form onSubmit={handleReopenSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Reopen Reason / Unresolved Details * (min 10 characters)
+                </label>
+                <textarea
+                  rows={4}
+                  required
+                  value={reopenReason}
+                  onChange={(e) => setReopenReason(e.target.value)}
+                  placeholder="e.g. The water leak resumed after classes started this morning..."
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-slate-900 placeholder:text-slate-400 focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={reopenLoading}
+                  onClick={() => setReopenModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-semibold transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={reopenLoading || reopenReason.trim().length < 10}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold transition-colors inline-flex items-center gap-1.5 shadow-xs disabled:opacity-60"
+                >
+                  {reopenLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Submit Reopen Request</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

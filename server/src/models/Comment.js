@@ -21,6 +21,17 @@ const commentSchema = new mongoose.Schema(
       minlength: [1, 'Comment text cannot be empty'],
       maxlength: [1000, 'Comment text cannot exceed 1000 characters'],
     },
+    isInternal: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    visibility: {
+      type: String,
+      enum: ['public', 'internal'],
+      default: 'public',
+      index: true,
+    },
   },
   {
     timestamps: true,
@@ -45,6 +56,7 @@ const commentSchema = new mongoose.Schema(
 
 // Newest comments first for an issue
 commentSchema.index({ issue: 1, createdAt: -1 });
+commentSchema.index({ issue: 1, isInternal: 1, createdAt: 1 });
 commentSchema.index({ author: 1, createdAt: -1 });
 
 const Comment = mongoose.model('Comment', commentSchema);

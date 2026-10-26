@@ -32,5 +32,10 @@ export default function ProtectedRoute({ children }) {
     return <Navigate to="/admin" replace />;
   }
 
+  // Staff attempting student action route: redirect to staff interface
+  if (user?.role === 'staff') {
+    return <Navigate to="/staff" replace />;
+  }
+
   return children;
 }

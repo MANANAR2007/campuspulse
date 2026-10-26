@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import Comment from '../models/Comment.js';
 import Issue from '../models/Issue.js';
+import { canUserViewIssue } from './issueController.js';
 import { createNotification } from '../utils/notificationHelper.js';
 import {
   emitCommentCreated,
@@ -10,7 +11,8 @@ import {
 
 /**
  * GET /api/issues/:id/comments
- * Retrieve paginated comments for an issue
+ * Retrieve paginated comments for an issue.
+ * Access-controlled: Students never receive internal staff notes.
  */
 export const getIssueComments = async (req, res, next) => {
   try {
@@ -31,8 +33,8 @@ export const getIssueComments = async (req, res, next) => {
       });
     }
 
-    // Do not expose comments for rejected issues to non-admin users
-    if (issue.status === 'rejected' && (!req.user || req.user.role !== 'admin')) {
+    // Access check using three-tier visibility validator
+    if (!canUserViewIssue(req.user, issue)) {
       return res.status(404).json({
         status: 'fail',
         message: 'Issue report not accessible.',
@@ -43,13 +45,19 @@ export const getIssueComments = async (req, res, next) => {
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
     const skip = (page - 1) * limit;
 
+    // Filter comments: Students never see internal notes
+    const commentFilter = { issue: id };
+    if (req.user?.role === 'student') {
+      commentFilter.isInternal = false;
+    }
+
     const [comments, totalCount] = await Promise.all([
-      Comment.find({ issue: id })
+      Comment.find(commentFilter)
         .sort({ createdAt: 1 }) // Chronological order for discussion
         .skip(skip)
         .limit(limit)
-        .populate('author', 'name email role department'),
-      Comment.countDocuments({ issue: id }),
+        .populate('author', 'name email role department departmentName'),
+      Comment.countDocuments(commentFilter),
     ]);
 
     const totalPages = Math.ceil(totalCount / limit) || 1;
@@ -75,12 +83,13 @@ export const getIssueComments = async (req, res, next) => {
 
 /**
  * POST /api/issues/:id/comments
- * Post a new persistent comment on an issue
+ * Post a new persistent comment on an issue.
+ * Supports public updates and internal staff notes.
  */
 export const createComment = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { text } = req.body;
+    const { text, isInternal, visibility } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({
@@ -111,6 +120,13 @@ export const createComment = async (req, res, next) => {
       });
     }
 
+    if (!canUserViewIssue(req.user, issue)) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Issue report not found or access restricted.',
+      });
+    }
+
     if (issue.status === 'rejected') {
       return res.status(400).json({
         status: 'fail',
@@ -118,36 +134,46 @@ export const createComment = async (req, res, next) => {
       });
     }
 
+    const wantsInternal = Boolean(isInternal || visibility === 'internal');
+
+    // Strict role check: Students must not post internal staff notes
+    if (wantsInternal && req.user.role === 'student') {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'Access denied: Students are not permitted to post internal staff notes.',
+      });
+    }
+
     const newComment = await Comment.create({
       issue: id,
       author: req.user._id,
       text: text.trim(),
+      isInternal: wantsInternal,
+      visibility: wantsInternal ? 'internal' : 'public',
     });
 
     const populatedComment = await Comment.findById(newComment._id).populate(
       'author',
-      'name email role department'
+      'name email role department departmentName'
     );
 
-    // Notify issue owner (unless the commenter is the issue author themselves)
-    if (issue.createdBy && !issue.createdBy.equals(req.user._id)) {
-      const excerpt =
-        newComment.text.length > 60
-          ? `${newComment.text.slice(0, 60)}...`
-          : newComment.text;
-
+    // Only notify reporter if this is a public comment and not posted by the reporter
+    if (!wantsInternal && !issue.createdBy.equals(req.user._id)) {
       await createNotification({
         recipient: issue.createdBy,
         actor: req.user._id,
         issue: issue._id,
         type: 'issue_comment',
-        title: 'New Comment on Your Report',
-        message: `${req.user.name} commented on "${issue.title}": "${excerpt}"`,
+        title: 'New Update on Your Report',
+        message: `${req.user.name} commented on "${issue.title}".`,
       });
     }
 
-    // Realtime broadcast to issue discussion room
-    emitCommentCreated(id, populatedComment);
+    // Realtime publication:
+    // Internal notes are only emitted to staff and admin (never to global student room)
+    if (!wantsInternal) {
+      emitCommentCreated(id, populatedComment);
+    }
 
     res.status(201).json({
       status: 'success',

@@ -79,9 +79,13 @@ export const initSocket = (httpServer, corsOptions = {}) => {
       }
 
       // Verify user existence in database
-      const user = await User.findById(decoded.id).select('_id name email role');
+      const user = await User.findById(decoded.id).select('_id name email role department isActive');
       if (!user) {
         return next(new Error('Authentication failed: User account no longer exists.'));
+      }
+
+      if (user.isActive === false) {
+        return next(new Error('Authentication failed: Account has been deactivated.'));
       }
 
       // Attach authenticated user identity to socket
@@ -89,6 +93,7 @@ export const initSocket = (httpServer, corsOptions = {}) => {
         id: user._id.toString(),
         name: user.name,
         role: user.role,
+        department: user.department ? user.department.toString() : null,
       };
 
       next();
@@ -99,7 +104,7 @@ export const initSocket = (httpServer, corsOptions = {}) => {
 
   // Connection Handler
   io.on('connection', (socket) => {
-    const { id: userId, role } = socket.user;
+    const { id: userId, role, department } = socket.user;
 
     // 1. Join personal private user room for targeted notifications
     socket.join(`user:${userId}`);
@@ -109,7 +114,15 @@ export const initSocket = (httpServer, corsOptions = {}) => {
       socket.join('role:admin');
     }
 
-    // 3. Handle room subscription for specific issue discussion threads
+    // 3. If staff, join staff room and department room
+    if (role === 'staff') {
+      socket.join('role:staff');
+      if (department) {
+        socket.join(`dept:${department}`);
+      }
+    }
+
+    // 4. Handle room subscription for specific issue discussion threads
     socket.on('join:issue', async (issueId, callback) => {
       try {
         if (!issueId || !mongoose.Types.ObjectId.isValid(issueId)) {
@@ -119,7 +132,9 @@ export const initSocket = (httpServer, corsOptions = {}) => {
           return;
         }
 
-        const issue = await Issue.findById(issueId).select('_id status createdBy');
+        const issue = await Issue.findById(issueId).select(
+          '_id status createdBy visibility department assignedTo'
+        );
         if (!issue) {
           if (typeof callback === 'function') {
             callback({ error: 'Issue report not found.' });
@@ -127,14 +142,43 @@ export const initSocket = (httpServer, corsOptions = {}) => {
           return;
         }
 
-        // Prevent joining rooms for rejected issues unless author or admin
         const isAuthor = issue.createdBy.toString() === userId;
         const isAdmin = role === 'admin';
+        const isAssignedStaff =
+          role === 'staff' &&
+          issue.assignedTo &&
+          issue.assignedTo.toString() === userId;
+        const isDeptStaff =
+          role === 'staff' &&
+          issue.department &&
+          department &&
+          issue.department.toString() === department;
+
+        // Prevent joining rooms for rejected issues unless author or admin
         if (issue.status === 'rejected' && !isAuthor && !isAdmin) {
           if (typeof callback === 'function') {
             callback({ error: 'Issue report is inaccessible.' });
           }
           return;
+        }
+
+        // Privacy and visibility check
+        if (issue.visibility === 'confidential') {
+          if (!isAuthor && !isAdmin && !isAssignedStaff) {
+            if (typeof callback === 'function') {
+              callback({ error: 'Issue is confidential and restricted.' });
+            }
+            return;
+          }
+        }
+
+        if (issue.visibility === 'department_only') {
+          if (!isAuthor && !isAdmin && !isDeptStaff) {
+            if (typeof callback === 'function') {
+              callback({ error: 'Issue is restricted to department staff.' });
+            }
+            return;
+          }
         }
 
         const roomName = `issue:${issueId}`;
@@ -180,19 +224,49 @@ export const getIO = () => {
 
 export const emitIssueCreated = (issue) => {
   if (!io) return;
-  // Broadcast to all authenticated clients for live feed updates
-  io.emit('issue:created', {
-    issueId: issue.id || issue._id?.toString(),
-    issue,
-  });
+  const issueId = issue.id || issue._id?.toString();
+  const visibility = issue.visibility || 'public';
+
+  if (visibility === 'public') {
+    io.emit('issue:created', { issueId, issue });
+  } else {
+    // Restricted emission to preserve confidentiality
+    io.to('role:admin').emit('issue:created', { issueId, issue });
+    const creatorId = issue.createdBy?.id || issue.createdBy?._id || issue.createdBy;
+    if (creatorId) {
+      io.to(`user:${creatorId.toString()}`).emit('issue:created', { issueId, issue });
+    }
+    if (visibility === 'department_only' && issue.department) {
+      const deptId = issue.department?.id || issue.department?._id || issue.department;
+      io.to(`dept:${deptId.toString()}`).emit('issue:created', { issueId, issue });
+    }
+  }
 };
 
 export const emitIssueUpdated = (issue) => {
   if (!io) return;
   const issueId = issue.id || issue._id?.toString();
-  // Broadcast to feed and specific issue room
-  io.emit('issue:updated', { issueId, issue });
-  io.to(`issue:${issueId}`).emit('issue:updated', { issueId, issue });
+  const visibility = issue.visibility || 'public';
+
+  if (visibility === 'public') {
+    io.emit('issue:updated', { issueId, issue });
+    io.to(`issue:${issueId}`).emit('issue:updated', { issueId, issue });
+  } else {
+    io.to('role:admin').emit('issue:updated', { issueId, issue });
+    io.to(`issue:${issueId}`).emit('issue:updated', { issueId, issue });
+    const creatorId = issue.createdBy?.id || issue.createdBy?._id || issue.createdBy;
+    if (creatorId) {
+      io.to(`user:${creatorId.toString()}`).emit('issue:updated', { issueId, issue });
+    }
+    if (issue.assignedTo) {
+      const staffId = issue.assignedTo?.id || issue.assignedTo?._id || issue.assignedTo;
+      io.to(`user:${staffId.toString()}`).emit('issue:updated', { issueId, issue });
+    }
+    if (visibility === 'department_only' && issue.department) {
+      const deptId = issue.department?.id || issue.department?._id || issue.department;
+      io.to(`dept:${deptId.toString()}`).emit('issue:updated', { issueId, issue });
+    }
+  }
 };
 
 export const emitIssueDeleted = (issueId) => {
@@ -204,18 +278,34 @@ export const emitIssueDeleted = (issueId) => {
 export const emitStatusChanged = (issue) => {
   if (!io) return;
   const issueId = issue.id || issue._id?.toString();
-  io.emit('issue:statusChanged', {
+  const visibility = issue.visibility || 'public';
+
+  const payload = {
     issueId,
     status: issue.status,
     isCampusWideAlert: issue.isCampusWideAlert,
     issue,
-  });
-  io.to(`issue:${issueId}`).emit('issue:statusChanged', {
-    issueId,
-    status: issue.status,
-    isCampusWideAlert: issue.isCampusWideAlert,
-    issue,
-  });
+  };
+
+  if (visibility === 'public') {
+    io.emit('issue:statusChanged', payload);
+    io.to(`issue:${issueId}`).emit('issue:statusChanged', payload);
+  } else {
+    io.to('role:admin').emit('issue:statusChanged', payload);
+    io.to(`issue:${issueId}`).emit('issue:statusChanged', payload);
+    const creatorId = issue.createdBy?.id || issue.createdBy?._id || issue.createdBy;
+    if (creatorId) {
+      io.to(`user:${creatorId.toString()}`).emit('issue:statusChanged', payload);
+    }
+    if (issue.assignedTo) {
+      const staffId = issue.assignedTo?.id || issue.assignedTo?._id || issue.assignedTo;
+      io.to(`user:${staffId.toString()}`).emit('issue:statusChanged', payload);
+    }
+    if (visibility === 'department_only' && issue.department) {
+      const deptId = issue.department?.id || issue.department?._id || issue.department;
+      io.to(`dept:${deptId.toString()}`).emit('issue:statusChanged', payload);
+    }
+  }
 };
 
 export const emitAlertApproved = (issue) => {
@@ -227,12 +317,18 @@ export const emitAlertApproved = (issue) => {
   });
 };
 
-export const emitCommentCreated = (issueId, comment) => {
+export const emitCommentCreated = (issueId, comment, isInternal = false) => {
   if (!io) return;
-  io.to(`issue:${issueId}`).emit('comment:created', {
-    issueId,
-    comment,
-  });
+  if (isInternal) {
+    // Only emit internal note to admin and staff rooms
+    io.to('role:admin').emit('comment:created', { issueId, comment });
+    io.to('role:staff').emit('comment:created', { issueId, comment });
+  } else {
+    io.to(`issue:${issueId}`).emit('comment:created', {
+      issueId,
+      comment,
+    });
+  }
 };
 
 export const emitCommentUpdated = (issueId, comment) => {

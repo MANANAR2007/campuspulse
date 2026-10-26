@@ -46,7 +46,7 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
-    // Ensure user still exists
+    // Ensure user still exists and is active
     const currentUser = await User.findById(decoded.id);
     if (!currentUser) {
       return res.status(401).json({
@@ -55,8 +55,51 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
+    if (currentUser.isActive === false) {
+      return res.status(403).json({
+        status: 'fail',
+        message: 'Your account has been deactivated. Please contact an administrator.',
+      });
+    }
+
     // Attach user to request
     req.user = currentUser;
+    next();
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Middleware: Optional authentication (attaches req.user if valid token provided, but does not block)
+ */
+export const authenticateOptional = async (req, res, next) => {
+  try {
+    let token = null;
+    if (req.cookies && req.cookies[COOKIE_NAME]) {
+      token = req.cookies[COOKIE_NAME];
+    } else if (
+      req.headers.authorization &&
+      req.headers.authorization.startsWith('Bearer ')
+    ) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+      return next();
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(token, config.jwtSecret);
+    } catch {
+      return next();
+    }
+
+    const currentUser = await User.findById(decoded.id);
+    if (currentUser && currentUser.isActive !== false) {
+      req.user = currentUser;
+    }
     next();
   } catch (error) {
     next(error);
@@ -78,6 +121,51 @@ export const requireAdmin = (req, res, next) => {
     return res.status(403).json({
       status: 'fail',
       message: 'Access denied. Administrator privileges are required for this action.',
+    });
+  }
+
+  next();
+};
+
+/**
+ * Middleware: Require Staff role
+ */
+export const requireStaff = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Authentication required. Please sign in.',
+    });
+  }
+
+  if (req.user.role !== 'staff' || req.user.isActive === false) {
+    return res.status(403).json({
+      status: 'fail',
+      message: 'Access denied. Active staff privileges are required for this action.',
+    });
+  }
+
+  next();
+};
+
+/**
+ * Middleware: Require Staff or Administrator role
+ */
+export const requireStaffOrAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      status: 'fail',
+      message: 'Authentication required. Please sign in.',
+    });
+  }
+
+  const isAdmin = req.user.role === 'admin';
+  const isStaff = req.user.role === 'staff' && req.user.isActive !== false;
+
+  if (!isAdmin && !isStaff) {
+    return res.status(403).json({
+      status: 'fail',
+      message: 'Access denied. Staff or administrator privileges are required.',
     });
   }
 
