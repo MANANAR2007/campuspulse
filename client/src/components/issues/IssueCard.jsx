@@ -15,7 +15,7 @@ import SeverityBadge from '../common/SeverityBadge.jsx';
 import StatusBadge from '../common/StatusBadge.jsx';
 import CategoryBadge from '../common/CategoryBadge.jsx';
 import { formatRelativeTime } from '../../utils/formatters.js';
-import { issuesAPI } from '../../services/api.js';
+import { issuesAPI, getCampusZoneLabel } from '../../services/api.js';
 
 export default function IssueCard({ issue }) {
   const issueId = issue.id || issue._id;
@@ -142,7 +142,7 @@ export default function IssueCard({ issue }) {
       </div>
 
       {/* Location Row */}
-      <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-4 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100">
+      <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-4 bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 flex-wrap">
         <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
         <span className="font-medium text-slate-700 truncate">{building}</span>
         {specificArea && (
@@ -150,6 +150,11 @@ export default function IssueCard({ issue }) {
             <span className="text-slate-300">•</span>
             <span className="truncate">{specificArea}</span>
           </>
+        )}
+        {issue.location?.campusZone && (
+          <span className="ml-auto text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 rounded shrink-0">
+            {getCampusZoneLabel(issue.location.campusZone)}
+          </span>
         )}
       </div>
 

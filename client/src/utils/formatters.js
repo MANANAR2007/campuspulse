@@ -70,3 +70,19 @@ export function formatRelativeTime(dateString) {
   if (diffInDays < 7) return `${diffInDays}d ago`;
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
+
+/**
+ * Format absolute timestamp helper
+ */
+export function formatDate(dateString) {
+  if (!dateString) return '';
+  const date = new Date(dateString);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}

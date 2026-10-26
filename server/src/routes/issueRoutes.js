@@ -9,6 +9,7 @@ import {
   deleteIssue,
   confirmIssue,
   unconfirmIssue,
+  checkDuplicateIssues,
 } from '../controllers/issueController.js';
 import {
   getIssueComments,
@@ -29,6 +30,9 @@ router.get('/mine', requireStudent, getMyIssues);
 
 // Alert banner query (must be registered BEFORE /:id)
 router.get('/alerts', getActiveAlerts);
+
+// Duplicate Radar: pre-submission similarity check (must be registered BEFORE /:id)
+router.get('/duplicates', requireStudent, checkDuplicateIssues);
 
 // Nested comments for an issue (Student mode only)
 router.get('/:id/comments', requireStudent, getIssueComments);

@@ -14,7 +14,7 @@
    ```bash
    npm run test
    ```
-   *(Confirms 51/51 test cases pass: MongoDB Atlas connection, JWT HttpOnly cookies, RBAC role separation, Socket.IO handshake, room isolation, alerts, and CRUD).*
+   *(Confirms 65/65 test cases pass: MongoDB Atlas connection resilience, JWT HttpOnly cookies, RBAC role separation, Socket.IO handshake, Duplicate Radar similarity, Status History lifecycle, Campus Hotspots, Command Center analytics, room isolation, alerts, and CRUD).*
 2. **Start Dev Servers (if running locally):**
    ```bash
    npm run dev
@@ -56,29 +56,34 @@
 
 ---
 
-### Minute 0:45 – 1:30 | Student Report with Emergency Alert Request
+### Minute 0:45 – 1:30 | Duplicate Radar & Student Report Submission
 1. **In Left Window (Student):**
    - Click **"Report Issue"** (`/issues/new`).
-   - Title: `Major Water Main Leak in Science Wing B`
+   - Start typing Title: `Water Leak`
+   - **Point out Duplicate Radar:** As you type, the amber **Duplicate Radar** suggestion box animates in, checking for active similar reports across campus without requiring external AI keys.
+   - Now specify full title: `Major Water Main Leak in Science Wing B`
    - Description: `Main overhead pipe burst on 2nd floor corridor. Water spreading rapidly toward computer lab 204.`
-   - Category: `Plumbing`
+   - Category: `Plumbing & Water`
    - Severity: `Critical`
+   - Campus Zone: `Labs & Research Center` (demonstrating standardized `CAMPUS_ZONES`).
    - Location: Building: `Science Complex`, Area: `North Wing`, Floor: `Floor 2`, Room: `Corridor / Lab 204`.
    - Toggle **"Request Campus-Wide Alert"** ON.
    - *(Optional)* Attach an image (demonstrating Cloudinary multi-part upload).
    - Click **"Submit Report"**.
 2. **Immediate Real-time Synchronization:**
-   - The student's screen transitions to `/my-reports`.
-   - **LOOK AT RIGHT WINDOW (Admin):** Without refreshing the page, the Admin Review Queue counter increments, and the new report appears in the live queue labeled with a yellow `Reported` status and an amber badge `Alert Requested`.
+   - The student's screen transitions to the new issue detail page.
+   - **LOOK AT RIGHT WINDOW (Admin Command Center):** Without refreshing the page, the 7-day velocity chart increments, the review queue table receives the new row, and the `Labs & Research Center` Hotspot card updates with an incremented recurrence score!
 
 ---
 
-### Minute 1:30 – 2:30 | Admin Verification & Campus Alert Fan-Out
-1. **In Right Window (Admin Dashboard):**
-   - Click **"Verify Report"** on the newly submitted issue.
+### Minute 1:30 – 2:30 | Admin Command Center, Hotspots & Alert Approval
+1. **In Right Window (Admin Command Center):**
+   - **Demonstrate Click-to-Filter KPI Cards:** Click on the `Pending Review` or `Critical` card to filter the review table instantly with one click.
+   - **Demonstrate Campus Hotspots:** Show the `Labs & Research Center` hotspot card with its computed recurrence score. Click **"Drill Down Zone"** to filter all tickets in that zone.
+   - In the review queue, click **"Verify Report"** on the newly submitted issue.
    - Check **"Approve Official Campus-Wide Alert"**.
    - Enter Administrator Note: `Facilities emergency plumbing team dispatched. Electrical mains in Wing B isolated for safety.`
-   - Click **"Confirm Decision"**.
+   - Click **"Confirm Verify"**.
 2. **Watch Real-Time Reactive Propagation:**
    - **LOOK AT LEFT WINDOW (Student Feed):**
      - Instantly, a high-priority red **Campus Alert Banner** animates onto the top of the feed.
@@ -90,20 +95,20 @@
 
 ---
 
-### Minute 2:30 – 3:30 | Peer Affirmation & Admin Inspection View
+### Minute 2:30 – 3:30 | Peer Affirmation, Lifecycle Audit Trail & Dispatch
 1. **In Left Window (Student):**
    - Click on the issue card to open **Issue Details** (`/issues/:id`).
+   - **Point out Status History Timeline:** Notice the visual step progression bar (`Reported` → `Verified`) and the chronological event audit trail recording the admin's name, timestamp, and resolution note.
    - Click **"Affects Me Too"**:
      - Counter increments from `0` to `1` in real-time.
    - Under Discussion, post a comment: `Water is now dripping into ground floor lecture hall 102.`
 2. **In Right Window (Admin Mode):**
    - In the review queue, click **"Details"** (`/admin/issues/:id`):
-     - Opens the dedicated **Admin Issue Details View** (rendered inside `AdminLayout`).
-     - Admin can inspect the full report, reporter credentials, photographic evidence, and discussion thread audit.
+     - Opens the dedicated **Admin Issue Details View** with the persistent `StatusHistoryTimeline`, photographic evidence, and discussion thread audit.
      - Point out: **Admins cannot click "Affects Me Too"** (it is a student-only affirmation).
 3. **Dispatch Maintenance & Resolve:**
-   - On the Admin Issue Details page, click **"Dispatch Maintenance (In Progress)"**.
-   - Left Window status badge updates live to orange `In Progress`.
+   - On the Admin Issue Details page, click **"Dispatch Maintenance (In Progress)"** with note: `Contractor plumbing squad on-site with submersible pumps.`
+   - Left Window timeline animates live to orange `In Progress` with a third entry in the audit trail.
    - Click **"Mark Issue Resolved"** with resolution note: `Pipe replaced and pressure tested. All corridors dried and cleared for access.`
    - Status transitions to green `Resolved`, and the alert banner disappears from active student feeds.
 

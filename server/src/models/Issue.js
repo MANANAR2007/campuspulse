@@ -20,6 +20,23 @@ export const ISSUE_STATUSES = [
   'rejected',
 ];
 
+export const CAMPUS_ZONES = [
+  'academic_blocks',
+  'library',
+  'hostels',
+  'cafeteria',
+  'sports_complex',
+  'admin_block',
+  'labs_research',
+  'parking_transit',
+  'auditorium',
+  'campus_grounds',
+  'other',
+];
+
+/**
+ * Structured campus location sub-schema
+ */
 const locationSchema = new mongoose.Schema(
   {
     building: {
@@ -27,6 +44,17 @@ const locationSchema = new mongoose.Schema(
       required: [true, 'Campus building is required'],
       trim: true,
       maxlength: [120, 'Building name cannot exceed 120 characters'],
+    },
+    campusZone: {
+      type: String,
+      trim: true,
+      enum: {
+        values: CAMPUS_ZONES,
+        message: 'Invalid campus zone: {VALUE}',
+      },
+      default: 'academic_blocks',
+      lowercase: true,
+      index: true,
     },
     area: {
       type: String,
@@ -48,6 +76,35 @@ const locationSchema = new mongoose.Schema(
     },
   },
   { _id: false }
+);
+
+/**
+ * Chronological Status History Entry sub-schema
+ */
+const statusHistoryEntrySchema = new mongoose.Schema(
+  {
+    status: {
+      type: String,
+      required: true,
+      enum: ISSUE_STATUSES,
+    },
+    changedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    note: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Status transition note cannot exceed 1000 characters'],
+      default: '',
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: true }
 );
 
 const issueSchema = new mongoose.Schema(
@@ -116,6 +173,10 @@ const issueSchema = new mongoose.Schema(
       lowercase: true,
       index: true,
     },
+    statusHistory: {
+      type: [statusHistoryEntrySchema],
+      default: [],
+    },
     campusAlertRequested: {
       type: Boolean,
       default: false,
@@ -169,8 +230,10 @@ issueSchema.index({ category: 1, status: 1 });
 issueSchema.index({ severity: 1, status: 1 });
 issueSchema.index({ isCampusWideAlert: 1, status: 1 });
 issueSchema.index({ createdBy: 1, createdAt: -1 });
+issueSchema.index({ 'location.campusZone': 1, status: 1 });
+issueSchema.index({ 'location.campusZone': 1, createdAt: -1 });
 
-// Text index for safe keyword search
+// Text index for safe keyword search and duplicate detection
 issueSchema.index(
   {
     title: 'text',

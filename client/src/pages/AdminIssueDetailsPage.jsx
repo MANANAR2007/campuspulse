@@ -16,12 +16,14 @@ import {
   FileCheck,
   Wrench,
   Check,
+  Users,
 } from 'lucide-react';
 import SeverityBadge from '../components/common/SeverityBadge.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
 import CategoryBadge from '../components/common/CategoryBadge.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
-import { adminAPI } from '../services/api.js';
+import StatusHistoryTimeline from '../components/issues/StatusHistoryTimeline.jsx';
+import { adminAPI, getCampusZoneLabel } from '../services/api.js';
 import { useSocket } from '../context/SocketContext.jsx';
 import { formatRelativeTime } from '../utils/formatters.js';
 
@@ -282,6 +284,11 @@ export default function AdminIssueDetailsPage() {
                   {issue.location?.floor && <span> • Floor: {issue.location.floor}</span>}
                   {issue.location?.room && <span> • Room: {issue.location.room}</span>}
                 </div>
+                <div className="pt-1">
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md">
+                    Campus Zone: {getCampusZoneLabel(issue.location?.campusZone)}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -308,6 +315,14 @@ export default function AdminIssueDetailsPage() {
               </div>
             )}
           </div>
+
+          {/* Issue Lifecycle Timeline & Audit Trail */}
+          <StatusHistoryTimeline
+            statusHistory={issue.statusHistory}
+            currentStatus={issue.status}
+            createdAt={issue.createdAt}
+            reporter={issue.createdBy}
+          />
 
           {/* Read-Only Discussion Audit Feed */}
           <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-xs space-y-4">

@@ -1,4 +1,4 @@
-# CampusPulse 🏛️⚡
+# CampusPulse 2.0 🏛️⚡
 
 > **A real-time campus issue-reporting, operational awareness, and facilities dispatch platform for colleges and universities.**
 
@@ -6,17 +6,25 @@ Built with the **MERN** stack (MongoDB Atlas, Express.js, React 18 / Vite, Node.
 
 ---
 
-## 🌟 Key Features
+## 🌟 Key Features (CampusPulse 2.0)
 
-- 📢 **Structured Issue Reporting:** Students submit campus issues with title, description, category (infrastructure, electrical, plumbing, IT/WiFi, safety, sanitation), severity levels (low, medium, high, critical), and structured location details (building, area, floor, room).
+- 🎛️ **Campus Command Center:** Executive administrative operational dashboard featuring:
+  - **Interactive Click-to-Filter KPI Cards:** One-click filtering of the operational review queue by Pending Review, In Progress, Resolved, Critical Hazards, and Active Advisories.
+  - **7-Day Inflow Velocity Trend:** Daily incident velocity bar chart tracking report volume over time.
+  - **Category Clustering:** Real-time proportional distribution across infrastructure, electrical, plumbing, sanitation, safety, and IT.
+  - **Status Lifecycle Split:** High-level operational overview of ticket progress.
+- 📍 **Campus Hotspots & Recurrence Detection:** Standardized campus zones (`CAMPUS_ZONES`: Academic Blocks, Library, Hostels, Cafeteria, Sports Complex, Admin Block, Labs & Research, Parking & Transit, Auditorium, Campus Grounds, Other). Automatically computes a recurrence score based on active volume, critical hazards, and recent recurrence (14-day rolling window) with a 1-click **Drill Down** filter.
+- 📡 **Duplicate Radar (Pre-Submission Similarity Detection):** Lightweight client-server similarity engine that detects existing unresolved reports as students type their title or select categories/locations. Displays non-blocking match cards with a "View & Support This Instead" button to prevent redundant tickets.
+- 📜 **Complete Issue Lifecycle & Chronological Audit Trail:** Persistent `statusHistory` array on the `Issue` model capturing every state change (`reported` → `verified` → `in_progress` → `resolved`, or `rejected`), recording the responsible actor, timestamp, and official administrative resolution notes.
+- 📢 **Structured Issue Reporting:** Students submit campus issues with title, description, category, severity levels (low, moderate, high, critical), standardized campus zones, and room details.
 - 📸 **Cloudinary Photo Uploads:** Optional real-time issue photo attachments with memory buffer streaming, file size guards (5MB), and binary magic-byte verification (JPEG/PNG/WebP). Text-only reporting remains fully functional if Cloudinary is unconfigured.
-- 🛡️ **Role-Based Access Control (RBAC):** Strict separation between student and administrator roles. Students cannot approve alerts, verify their own reports, or arbitrarily resolve issues.
+- 🛡️ **Role-Based Access Control (RBAC):** Strict separation between student and administrator modes. Students cannot approve alerts, verify their own reports, or arbitrarily resolve issues; administrators are restricted to management workflows.
 - 🚨 **Campus-Wide Alert Lifecycles:** Urgent hazards can request emergency visibility. Only verified administrators can approve campus-wide alerts, immediately fanning out notifications and pinning red warning banners across campus feeds.
 - ⚡ **Authenticated Real-Time Synchronization (Socket.IO):** Live feed updates, comment feeds, notification delivery, and admin review queue counters sync instantaneously via WebSocket connections authenticated through HttpOnly JWT cookies.
 - 💬 **Persistent Discussion Threads:** Students and staff collaborate inside dedicated issue rooms (`issue:<id>`). Comments persist to MongoDB and broadcast in real-time.
-- 👥 **"Affects Me Too" Affirmations:** Students confirm shared impact on unresolved issues, giving facilities administrators quantifiable crowd-sourced urgency data.
+- 👥 **Community Signal System ("Affects Me Too"):** Unique affirmation support with compound index enforcement (`{ issue: 1, user: 1 }`), live counter broadcasts, and optimistic UI.
 - 🔔 **Targeted In-App Notifications:** Event-driven notification system storing updates in MongoDB and pushing live updates to private user rooms (`user:<userId>`).
-- 🔒 **Production Security Hardened:** HttpOnly `SameSite=Lax` cookies prevent XSS token theft, bcryptjs hashes passwords (12 salt rounds), express-rate-limit prevents brute-force abuse, and strict input validation guards all endpoints.
+- 🔒 **Production Security Hardened:** HttpOnly `SameSite=Lax` cookies prevent XSS token theft, bcryptjs hashes passwords (12 salt rounds), express-rate-limit configured with trust proxy guards against `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`, and strict input validation guards all endpoints.
 
 ---
 

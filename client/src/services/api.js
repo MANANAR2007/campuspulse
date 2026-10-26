@@ -183,6 +183,12 @@ export const issuesAPI = {
     request(`/issues/${id}/confirm`, {
       method: 'DELETE',
     }),
+
+  // GET /api/issues/duplicates (Duplicate Radar pre-submission search)
+  checkDuplicates: (params = {}) =>
+    request(`/issues/duplicates${buildQueryString(params)}`, {
+      method: 'GET',
+    }),
 };
 
 /**
@@ -274,7 +280,38 @@ export const adminAPI = {
     request('/admin/stats', {
       method: 'GET',
     }),
+
+  // GET /api/admin/hotspots
+  getHotspots: () =>
+    request('/admin/hotspots', {
+      method: 'GET',
+    }),
 };
+
+/**
+ * Standardized Campus Zones list for frontend forms and drill-downs
+ */
+export const CAMPUS_ZONES = [
+  { value: 'academic_blocks', label: 'Academic Blocks' },
+  { value: 'library', label: 'Library' },
+  { value: 'hostels', label: 'Hostels & Residences' },
+  { value: 'cafeteria', label: 'Cafeteria & Dining' },
+  { value: 'sports_complex', label: 'Sports Complex & Gym' },
+  { value: 'admin_block', label: 'Administrative Block' },
+  { value: 'labs_research', label: 'Labs & Research Center' },
+  { value: 'parking_transit', label: 'Parking & Transit' },
+  { value: 'auditorium', label: 'Auditorium & Halls' },
+  { value: 'campus_grounds', label: 'Campus Grounds & Walkways' },
+  { value: 'other', label: 'Other Campus Area' },
+];
+
+/**
+ * Helper to display readable campus zone labels
+ */
+export function getCampusZoneLabel(zoneKey) {
+  const match = CAMPUS_ZONES.find((z) => z.value === zoneKey);
+  return match ? match.label : zoneKey ? zoneKey.replace('_', ' ') : 'Campus';
+}
 
 /**
  * Health check endpoint

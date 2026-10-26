@@ -14,9 +14,12 @@ import {
   X,
   FileText,
   Image as ImageIcon,
+  Radar,
+  ExternalLink,
 } from 'lucide-react';
-import { issuesAPI } from '../services/api.js';
+import { issuesAPI, CAMPUS_ZONES } from '../services/api.js';
 import SeverityBadge from '../components/common/SeverityBadge.jsx';
+import StatusBadge from '../components/common/StatusBadge.jsx';
 
 const FORM_CATEGORIES = [
   { id: 'infrastructure', label: 'Infrastructure & Buildings' },
@@ -46,6 +49,7 @@ export default function NewIssuePage() {
     title: '',
     category: 'infrastructure',
     severity: 'moderate',
+    campusZone: 'academic_blocks',
     building: '',
     area: '',
     floor: '',
@@ -53,6 +57,11 @@ export default function NewIssuePage() {
     description: '',
     campusAlertRequested: false,
   });
+
+  // Duplicate Radar states
+  const [duplicateMatches, setDuplicateMatches] = useState([]);
+  const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
+  const [dismissDuplicates, setDismissDuplicates] = useState(false);
 
   // Image upload states
   const [selectedImage, setSelectedImage] = useState(null);
@@ -63,6 +72,35 @@ export default function NewIssuePage() {
   const [errors, setErrors] = useState({});
   const [serverError, setServerError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Debounced Duplicate Radar similarity query
+  useEffect(() => {
+    if (!formData.title || formData.title.trim().length < 3) {
+      setDuplicateMatches([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsCheckingDuplicates(true);
+        const res = await issuesAPI.checkDuplicates({
+          q: formData.title.trim(),
+          category: formData.category,
+          campusZone: formData.campusZone,
+          building: formData.building.trim(),
+        });
+        if (res && res.data && Array.isArray(res.data.duplicates)) {
+          setDuplicateMatches(res.data.duplicates);
+        }
+      } catch {
+        // Non-blocking radar search
+      } finally {
+        setIsCheckingDuplicates(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [formData.title, formData.category, formData.campusZone, formData.building]);
 
   // Clean up object URL memory on unmount
   useEffect(() => {
@@ -180,6 +218,7 @@ export default function NewIssuePage() {
           'location',
           JSON.stringify({
             building: formData.building.trim(),
+            campusZone: formData.campusZone,
             area: formData.area.trim(),
             floor: formData.floor.trim(),
             room: formData.room.trim(),
@@ -201,6 +240,7 @@ export default function NewIssuePage() {
           severity: formData.severity,
           location: {
             building: formData.building.trim(),
+            campusZone: formData.campusZone,
             area: formData.area.trim(),
             floor: formData.floor.trim(),
             room: formData.room.trim(),
@@ -296,6 +336,63 @@ export default function NewIssuePage() {
           ) : (
             <p className="mt-1 text-xs text-slate-400">Summarize the core problem concisely (5-150 characters).</p>
           )}
+
+          {/* Duplicate Radar Pre-Submission Suggestion Panel */}
+          {duplicateMatches.length > 0 && !dismissDuplicates && (
+            <div className="mt-3 p-4 bg-amber-50/90 border border-amber-300 rounded-xl space-y-3 transition-all animate-fadeIn">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2 text-amber-900">
+                  <Radar className="w-4 h-4 text-amber-600 animate-pulse" />
+                  <span className="font-bold text-xs uppercase tracking-wider">
+                    Duplicate Radar: {duplicateMatches.length} Similar Issue{duplicateMatches.length > 1 ? 's' : ''} Already Reported Nearby
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDismissDuplicates(true)}
+                  className="text-amber-700 hover:text-amber-900 text-xs font-medium px-2 py-0.5 rounded hover:bg-amber-100 transition-colors"
+                >
+                  Dismiss Warning
+                </button>
+              </div>
+              <p className="text-xs text-amber-800 leading-relaxed">
+                Before submitting a new report, verify if one of these existing campus reports covers the same problem. You can view, affirm, and receive alerts on existing tickets to prioritize campus maintenance.
+              </p>
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {duplicateMatches.map((dup) => (
+                  <div
+                    key={dup.id || dup._id}
+                    className="bg-white border border-amber-200/90 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:border-amber-400 transition-all shadow-2xs"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-xs text-slate-900 truncate max-w-[280px]">
+                          {dup.title}
+                        </span>
+                        <StatusBadge status={dup.status} size="xs" />
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
+                        <span>📍 {dup.location?.building}</span>
+                        <span>•</span>
+                        <span className="text-indigo-600 font-medium">
+                          👥 {dup.confirmationCount || 0} students affected
+                        </span>
+                      </div>
+                    </div>
+                    <Link
+                      to={`/issues/${dup.id || dup._id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors shadow-xs"
+                    >
+                      <span>View & Support This</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Category & Severity Grid */}
@@ -362,6 +459,25 @@ export default function NewIssuePage() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="issue-campus-zone" className="block text-xs text-slate-600 mb-1">
+                Campus Zone *
+              </label>
+              <select
+                id="issue-campus-zone"
+                disabled={isSubmitting}
+                value={formData.campusZone}
+                onChange={(e) => setFormData({ ...formData, campusZone: e.target.value })}
+                className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all disabled:opacity-60"
+              >
+                {CAMPUS_ZONES.map((zone) => (
+                  <option key={zone.value} value={zone.value}>
+                    {zone.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div>
               <label htmlFor="issue-building" className="block text-xs text-slate-600 mb-1">
                 Building or Block Name *

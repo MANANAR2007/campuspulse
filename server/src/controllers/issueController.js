@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import Issue, {
   ISSUE_CATEGORIES,
   ISSUE_SEVERITIES,
+  CAMPUS_ZONES,
 } from '../models/Issue.js';
 import IssueConfirmation from '../models/IssueConfirmation.js';
 import Comment from '../models/Comment.js';
@@ -164,6 +165,17 @@ export const createIssue = async (req, res, next) => {
       });
     }
 
+    const rawCampusZone =
+      parsedLocation.campusZone ||
+      req.body['location.campusZone'] ||
+      req.body['location[campusZone]'] ||
+      req.body.campusZone ||
+      '';
+    const campusZone =
+      rawCampusZone && CAMPUS_ZONES.includes(rawCampusZone.toString().toLowerCase().trim())
+        ? rawCampusZone.toString().toLowerCase().trim()
+        : 'academic_blocks';
+
     const area = parsedLocation.area
       ? parsedLocation.area.trim()
       : parsedLocation.roomOrArea
@@ -213,13 +225,21 @@ export const createIssue = async (req, res, next) => {
         description: description.trim(),
         category: normalizedCategory,
         severity: normalizedSeverity,
-        location: { building, area, floor, room },
+        location: { building, campusZone, area, floor, room },
         imageUrl,
         imagePublicId,
         campusAlertRequested: Boolean(isAlertReq),
         // Protected fields strictly enforced by backend
         createdBy: req.user._id,
         status: 'reported',
+        statusHistory: [
+          {
+            status: 'reported',
+            changedBy: req.user._id,
+            note: 'Initial report submitted by student',
+            timestamp: new Date(),
+          },
+        ],
         isCampusWideAlert: false,
         reviewedBy: null,
         reviewedAt: null,
@@ -452,7 +472,8 @@ export const getIssueById = async (req, res, next) => {
 
     const issue = await Issue.findById(id)
       .populate('createdBy', 'name email department role')
-      .populate('reviewedBy', 'name email role');
+      .populate('reviewedBy', 'name email role')
+      .populate('statusHistory.changedBy', 'name email role');
 
     if (!issue) {
       return res.status(404).json({
@@ -611,8 +632,19 @@ export const updateIssue = async (req, res, next) => {
         });
       }
 
+      const rawZone =
+        parsedLocation.campusZone ||
+        req.body['location.campusZone'] ||
+        req.body['location[campusZone]'] ||
+        req.body.campusZone;
+      const zone =
+        rawZone && CAMPUS_ZONES.includes(rawZone.toString().toLowerCase().trim())
+          ? rawZone.toString().toLowerCase().trim()
+          : issue.location?.campusZone || 'academic_blocks';
+
       issue.location = {
         building: parsedLocation.building.trim(),
+        campusZone: zone,
         area: parsedLocation.area ? parsedLocation.area.trim() : parsedLocation.roomOrArea ? parsedLocation.roomOrArea.trim() : '',
         floor: parsedLocation.floor ? parsedLocation.floor.trim() : '',
         room: parsedLocation.room ? parsedLocation.room.trim() : '',
@@ -857,6 +889,151 @@ export const unconfirmIssue = async (req, res, next) => {
       data: {
         confirmationCount,
         currentUserConfirmed: false,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Common stopwords to filter out for keyword search in Duplicate Radar
+ */
+const DUPLICATE_STOPWORDS = new Set([
+  'the', 'is', 'at', 'which', 'on', 'a', 'an', 'in', 'and', 'or', 'of', 'for', 'to',
+  'with', 'by', 'from', 'it', 'my', 'we', 'our', 'there', 'this', 'that', 'not', 'no',
+  'are', 'was', 'were', 'has', 'have', 'had', 'been', 'issue', 'problem', 'broken',
+  'working', 'please', 'help', 'fix', 'floor', 'room', 'block',
+]);
+
+/**
+ * GET /api/issues/duplicates
+ * Duplicate Radar: Pre-submission similarity detection for potential duplicate reports
+ */
+export const checkDuplicateIssues = async (req, res, next) => {
+  try {
+    const { q, category, campusZone, building } = req.query;
+
+    const queryText = (typeof q === 'string' ? q.trim() : '');
+    const normalizedCategory = category ? normalizeCategory(category) : null;
+    const normalizedZone = (campusZone && CAMPUS_ZONES.includes(campusZone.trim().toLowerCase()))
+      ? campusZone.trim().toLowerCase()
+      : null;
+    const searchBuilding = typeof building === 'string' && building.trim().length > 0
+      ? building.trim().toLowerCase()
+      : null;
+
+    // If query has less than 3 chars and no category/location criteria, return empty
+    if (queryText.length < 3 && !normalizedCategory && !normalizedZone && !searchBuilding) {
+      return res.status(200).json({
+        status: 'success',
+        data: { duplicates: [] },
+      });
+    }
+
+    // Extract significant keywords
+    const rawTokens = queryText
+      .toLowerCase()
+      .replace(/[^\w\s]/g, ' ')
+      .split(/\s+/)
+      .filter((token) => token.length >= 3 && !DUPLICATE_STOPWORDS.has(token));
+
+    // Construct broad candidate search query
+    const conditions = [];
+
+    if (rawTokens.length > 0) {
+      const tokenRegexes = rawTokens.map((t) => new RegExp(t, 'i'));
+      conditions.push({ title: { $in: tokenRegexes } });
+      conditions.push({ description: { $in: tokenRegexes } });
+    }
+
+    if (normalizedCategory) {
+      conditions.push({ category: normalizedCategory });
+    }
+
+    if (normalizedZone) {
+      conditions.push({ 'location.campusZone': normalizedZone });
+    }
+
+    if (searchBuilding) {
+      conditions.push({ 'location.building': { $regex: searchBuilding, $options: 'i' } });
+    }
+
+    // If no conditions formed, return empty
+    if (conditions.length === 0) {
+      return res.status(200).json({
+        status: 'success',
+        data: { duplicates: [] },
+      });
+    }
+
+    // Query non-rejected reports
+    const candidates = await Issue.find({
+      status: { $ne: 'rejected' },
+      $or: conditions,
+    })
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .populate('createdBy', 'name email department role');
+
+    // Score and rank candidates based on similarity
+    const scoredCandidates = candidates.map((issue) => {
+      let score = 0;
+      const titleLower = (issue.title || '').toLowerCase();
+      const descLower = (issue.description || '').toLowerCase();
+      const issueBuildingLower = (issue.location?.building || '').toLowerCase();
+
+      // Keyword scoring
+      rawTokens.forEach((token) => {
+        if (titleLower.includes(token)) score += 4;
+        else if (descLower.includes(token)) score += 1.5;
+      });
+
+      // Category match scoring
+      if (normalizedCategory && issue.category === normalizedCategory) {
+        score += 3;
+      }
+
+      // Campus zone match scoring
+      if (normalizedZone && issue.location?.campusZone === normalizedZone) {
+        score += 3;
+      }
+
+      // Building match scoring
+      if (searchBuilding && issueBuildingLower.includes(searchBuilding)) {
+        score += 3;
+      }
+
+      // Freshness bonus: reports created within last 7 days get slight boost
+      const ageInDays = (Date.now() - new Date(issue.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+      if (ageInDays <= 7) score += 1.5;
+      else if (ageInDays <= 30) score += 0.5;
+
+      // Status relevance bonus: open issues are more likely to be active duplicates
+      if (issue.status === 'reported' || issue.status === 'verified' || issue.status === 'in_progress') {
+        score += 2;
+      }
+
+      return {
+        issue,
+        score,
+      };
+    });
+
+    // Filter only meaningful matches
+    const threshold = rawTokens.length > 0 ? 3.5 : 5.0;
+    const topMatches = scoredCandidates
+      .filter((item) => item.score >= threshold)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map((item) => item.issue);
+
+    const duplicatesWithAffirmations = await attachConfirmationData(topMatches, req.user?._id);
+
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        duplicates: duplicatesWithAffirmations,
       },
     });
   } catch (error) {

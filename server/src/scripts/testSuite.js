@@ -34,6 +34,7 @@ const bold = (text) => `\x1b[1m${text}\x1b[0m`;
 
 let serverInstance;
 let ioInstance;
+let mongodInstance = null;
 let studentCookie = null;
 let adminCookie = null;
 let testStudentUser = null;
@@ -70,7 +71,15 @@ async function runTests() {
   try {
     // 0. Database & Server Setup
     console.log(cyan('1. Initializing Test Server & Database...'));
-    await connectDB();
+    try {
+      await connectDB();
+    } catch (dbErr) {
+      console.log(cyan('  ⚠️  Atlas cluster rejected connection (IP not whitelisted). Spawning local MongoMemoryServer for automated test verification...'));
+      const { MongoMemoryServer } = await import('mongodb-memory-server');
+      mongodInstance = await MongoMemoryServer.create();
+      await mongoose.connect(mongodInstance.getUri());
+      console.log(`  ${green('Connected to in-memory test database successfully.')}`);
+    }
     const httpServer = http.createServer(app);
     ioInstance = initSocket(httpServer);
 
@@ -148,10 +157,11 @@ async function runTests() {
     const adminEmail = config.adminEmail || 'admin@campus.edu';
     let adminUser = await User.findOne({ email: adminEmail });
     if (!adminUser) {
+      const passwordHash = await User.hashPassword(config.adminPassword || 'AdminPass123!');
       adminUser = await User.create({
         name: config.adminName || 'Campus Admin',
         email: adminEmail,
-        password: config.adminPassword || 'AdminPass123!',
+        passwordHash,
         role: 'admin',
       });
     }
@@ -352,6 +362,12 @@ async function runTests() {
     assert(createIssueRes.status === 201, 'Student issue creation POST /api/issues returns HTTP 201');
     testIssueId = createIssueData.data.issue.id || createIssueData.data.issue._id;
     assert(testIssueId !== undefined, 'Issue creation returns assigned MongoDB ID');
+    assert(
+      Array.isArray(createIssueData.data.issue.statusHistory) &&
+        createIssueData.data.issue.statusHistory.length === 1 &&
+        createIssueData.data.issue.statusHistory[0].status === 'reported',
+      'Issue initialized with statusHistory recording initial student report'
+    );
 
     const createdEventPayload = await Promise.race([
       issueCreatedPromise,
@@ -361,6 +377,17 @@ async function runTests() {
       (createdEventPayload.issue.id || createdEventPayload.issue._id) === testIssueId,
       'Realtime "issue:created" event received with correct issue payload'
     );
+
+    // Duplicate Radar Pre-Submission Check
+    console.log(`\n${cyan('7b. Verifying Duplicate Radar Pre-Submission Check...')}`);
+    const dupRes = await fetch(`${BASE_URL}/api/issues/duplicates?q=Power Grid Outage&category=electrical`, {
+      headers: { Cookie: studentCookie },
+    });
+    const dupData = await dupRes.json();
+    assert(dupRes.status === 200, 'GET /api/issues/duplicates returns HTTP 200');
+    assert(Array.isArray(dupData.data?.duplicates), 'Duplicates endpoint returns array of candidate issues');
+    const matchedDup = dupData.data?.duplicates?.some((d) => (d.id || d._id) === testIssueId);
+    assert(matchedDup, 'Duplicate Radar accurately identifies newly reported similar issue');
 
     // 7. Realtime Room Join & Comment Emission
     console.log(`\n${cyan('8. Verifying Issue Room Subscription & Comment Realtime Event...')}`);
@@ -502,6 +529,84 @@ async function runTests() {
       adminAccessDetailData.data && (adminAccessDetailData.data.issue.id || adminAccessDetailData.data.issue._id) === testIssueId,
       'Admin issue detail returns full report with populated submitter and reviewer'
     );
+    assert(
+      Array.isArray(adminAccessDetailData.data.issue.statusHistory) && adminAccessDetailData.data.issue.statusHistory.length >= 2,
+      'Status history timeline records review transition with timestamp and reviewer'
+    );
+
+    // Lifecycle Transition Validation (Allowed: verified -> in_progress, Rejected: verified -> reported)
+    console.log(`\n${cyan('10b. Verifying Status Lifecycle Transition Matrix...')}`);
+    const invalidTransitionRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({ status: 'reported' }),
+    });
+    assert(
+      invalidTransitionRes.status === 400,
+      'Invalid status transition (verified -> reported) rejected with HTTP 400'
+    );
+
+    const validTransitionRes = await fetch(`${BASE_URL}/api/admin/issues/${testIssueId}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        status: 'in_progress',
+        resolutionNote: 'Electrical contractor team is on-site repairing damaged transformer coils.',
+      }),
+    });
+    const validTransitionData = await validTransitionRes.json();
+    assert(
+      validTransitionRes.status === 200,
+      'Valid status transition (verified -> in_progress) returns HTTP 200'
+    );
+    assert(
+      validTransitionData.data.issue.status === 'in_progress' &&
+        validTransitionData.data.issue.statusHistory.length >= 3,
+      'Issue status updated to in_progress with updated statusHistory entry'
+    );
+
+    // Campus Hotspots Analytics Endpoint
+    console.log(`\n${cyan('10c. Verifying Campus Hotspots & Recurrence Detection...')}`);
+    const hotspotsRes = await fetch(`${BASE_URL}/api/admin/hotspots`, {
+      headers: { Cookie: adminCookie },
+    });
+    const hotspotsData = await hotspotsRes.json();
+    assert(hotspotsRes.status === 200, 'GET /api/admin/hotspots returns HTTP 200');
+    assert(Array.isArray(hotspotsData.data.hotspots), 'Hotspots API returns array of campus zones');
+    const academicZone = hotspotsData.data.hotspots.find((h) => h.zone === 'academic_blocks');
+    assert(academicZone && academicZone.totalReports >= 1, 'Academic blocks zone aggregates newly reported issue');
+
+    // Admin Command Center Stats Endpoint
+    console.log(`\n${cyan('10d. Verifying Admin Command Center Stats & Distributions...')}`);
+    const commandCenterStatsRes = await fetch(`${BASE_URL}/api/admin/stats`, {
+      headers: { Cookie: adminCookie },
+    });
+    const commandCenterStatsData = await commandCenterStatsRes.json();
+    assert(commandCenterStatsRes.status === 200, 'GET /api/admin/stats returns HTTP 200');
+    assert(
+      Array.isArray(commandCenterStatsData.data.categoryDistribution) &&
+        Array.isArray(commandCenterStatsData.data.statusDistribution) &&
+        Array.isArray(commandCenterStatsData.data.recentVelocity),
+      'Admin stats returns category distribution, status distribution, and 7-day velocity series'
+    );
+
+    // Rate Limiter Proxy Header Resilience (No ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
+    console.log(`\n${cyan('10e. Verifying Proxy Header & Rate Limiter Resilience...')}`);
+    const proxyCheckRes = await fetch(`${BASE_URL}/api/health`, {
+      headers: {
+        'X-Forwarded-For': '203.0.113.195, 198.51.100.1',
+      },
+    });
+    assert(
+      proxyCheckRes.status === 200,
+      'API rate limiter behind reverse proxy processes X-Forwarded-For headers safely'
+    );
 
     // 10. Database-backed Notification Realtime Delivery
     console.log(`\n${cyan('11. Verifying Author Private Notification Event...')}`);
@@ -570,6 +675,9 @@ async function runTests() {
       await new Promise((resolve) => serverInstance.close(resolve));
     }
     await mongoose.disconnect();
+    if (mongodInstance) {
+      await mongodInstance.stop();
+    }
     process.exit();
   }
 }

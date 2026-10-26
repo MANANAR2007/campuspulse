@@ -3,10 +3,12 @@ import Issue, {
   ISSUE_CATEGORIES,
   ISSUE_SEVERITIES,
   ISSUE_STATUSES,
+  CAMPUS_ZONES,
 } from '../models/Issue.js';
 import IssueConfirmation from '../models/IssueConfirmation.js';
 import Comment from '../models/Comment.js';
 import { normalizeCategory } from '../utils/categoryHelper.js';
+import { attachConfirmationData } from './issueController.js';
 import {
   createNotification,
   fanOutCampusAlertNotification,
@@ -26,6 +28,7 @@ export const getAdminIssues = async (req, res, next) => {
       status,
       severity,
       category,
+      campusZone,
       campusAlertRequested,
       isCampusWideAlert,
       search,
@@ -45,6 +48,10 @@ export const getAdminIssues = async (req, res, next) => {
     if (category && typeof category === 'string') {
       const normalizedCat = normalizeCategory(category);
       if (normalizedCat) filter.category = normalizedCat;
+    }
+
+    if (campusZone && typeof campusZone === 'string') {
+      filter['location.campusZone'] = campusZone.trim().toLowerCase();
     }
 
     if (campusAlertRequested !== undefined) {
@@ -67,21 +74,28 @@ export const getAdminIssues = async (req, res, next) => {
 
     let sortOptions = { createdAt: -1 };
     if (sort === 'oldest') sortOptions = { createdAt: 1 };
-    if (sort === 'severity') sortOptions = { severity: 1, createdAt: -1 };
+    if (sort === 'severity' || sort === 'urgency') sortOptions = { severity: 1, createdAt: -1 };
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 10));
     const skip = (page - 1) * limit;
 
-    const [issues, totalCount] = await Promise.all([
+    const [rawIssues, totalCount] = await Promise.all([
       Issue.find(filter)
         .sort(sortOptions)
         .skip(skip)
         .limit(limit)
         .populate('createdBy', 'name email department role')
-        .populate('reviewedBy', 'name email role'),
+        .populate('reviewedBy', 'name email role')
+        .populate('statusHistory.changedBy', 'name email role'),
       Issue.countDocuments(filter),
     ]);
+
+    let issues = await attachConfirmationData(rawIssues, req.user._id);
+
+    if (sort === 'most_affirmed') {
+      issues = [...issues].sort((a, b) => (b.confirmationCount || 0) - (a.confirmationCount || 0));
+    }
 
     const totalPages = Math.ceil(totalCount / limit) || 1;
 
@@ -175,6 +189,23 @@ export const reviewIssue = async (req, res, next) => {
       }
     }
 
+    if (!issue.statusHistory) {
+      issue.statusHistory = [];
+    }
+    const transitionNote =
+      resolutionNote && typeof resolutionNote === 'string' && resolutionNote.trim()
+        ? resolutionNote.trim()
+        : decision === 'verify'
+        ? 'Verified by campus admin'
+        : 'Rejected by campus admin';
+
+    issue.statusHistory.push({
+      status: issue.status,
+      changedBy: req.user._id,
+      note: transitionNote,
+      timestamp: new Date(),
+    });
+
     await issue.save();
 
     // 1. Trigger notification to issue reporter
@@ -207,7 +238,8 @@ export const reviewIssue = async (req, res, next) => {
 
     const updatedIssue = await Issue.findById(issue._id)
       .populate('createdBy', 'name email department role')
-      .populate('reviewedBy', 'name email role');
+      .populate('reviewedBy', 'name email role')
+      .populate('statusHistory.changedBy', 'name email role');
 
     // Realtime broadcast of status update and approved alert
     emitStatusChanged(updatedIssue);
@@ -275,7 +307,7 @@ export const updateIssueStatus = async (req, res, next) => {
       verified: ['in_progress', 'rejected'],
       in_progress: ['resolved', 'verified'],
       resolved: ['in_progress'], // Reopening resolved ticket
-      rejected: [], // Cannot transition from rejected without explicit re-review
+      rejected: ['verified'], // Re-evaluating rejected ticket
     };
 
     const allowedNextStatuses = validTransitions[currentStatus] || [];
@@ -308,6 +340,21 @@ export const updateIssueStatus = async (req, res, next) => {
       issue.isCampusWideAlert = false;
     }
 
+    if (!issue.statusHistory) {
+      issue.statusHistory = [];
+    }
+    const noteText =
+      resolutionNote && typeof resolutionNote === 'string' && resolutionNote.trim()
+        ? resolutionNote.trim()
+        : `Status updated to ${targetStatus.replace('_', ' ')}`;
+
+    issue.statusHistory.push({
+      status: targetStatus,
+      changedBy: req.user._id,
+      note: noteText,
+      timestamp: new Date(),
+    });
+
     await issue.save();
 
     // Trigger notification to issue reporter on status update
@@ -324,7 +371,8 @@ export const updateIssueStatus = async (req, res, next) => {
 
     const updatedIssue = await Issue.findById(issue._id)
       .populate('createdBy', 'name email department role')
-      .populate('reviewedBy', 'name email role');
+      .populate('reviewedBy', 'name email role')
+      .populate('statusHistory.changedBy', 'name email role');
 
     // Realtime broadcast of status update and approved alert
     emitStatusChanged(updatedIssue);
@@ -350,6 +398,10 @@ export const updateIssueStatus = async (req, res, next) => {
  */
 export const getAdminStats = async (req, res, next) => {
   try {
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
+    sevenDaysAgo.setHours(0, 0, 0, 0);
+
     const [
       totalActive,
       openReports,
@@ -359,6 +411,12 @@ export const getAdminStats = async (req, res, next) => {
       resolved,
       activeAlerts,
       rejected,
+      categoryAgg,
+      statusAgg,
+      severityAgg,
+      velocityAgg,
+      totalAffirmations,
+      resolutionAgg,
     ] = await Promise.all([
       Issue.countDocuments({ status: { $ne: 'rejected' } }),
       Issue.countDocuments({ status: 'reported' }),
@@ -374,7 +432,70 @@ export const getAdminStats = async (req, res, next) => {
         status: { $nin: ['resolved', 'rejected'] },
       }),
       Issue.countDocuments({ status: 'rejected' }),
+      Issue.aggregate([
+        { $group: { _id: '$category', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ]),
+      Issue.aggregate([
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ]),
+      Issue.aggregate([
+        { $group: { _id: '$severity', count: { $sum: 1 } } },
+      ]),
+      Issue.aggregate([
+        { $match: { createdAt: { $gte: sevenDaysAgo } } },
+        {
+          $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      IssueConfirmation.countDocuments(),
+      Issue.aggregate([
+        { $match: { status: 'resolved' } },
+        {
+          $project: {
+            diffHours: {
+              $divide: [{ $subtract: ['$updatedAt', '$createdAt'] }, 1000 * 60 * 60],
+            },
+          },
+        },
+        { $group: { _id: null, avgHours: { $avg: '$diffHours' } } },
+      ]),
     ]);
+
+    // Build 7-day velocity series with labels
+    const velocityMap = new Map(velocityAgg.map((v) => [v._id, v.count]));
+    const recentVelocity = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().slice(0, 10);
+      const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+      recentVelocity.push({
+        date: dateStr,
+        label: dayLabel,
+        count: velocityMap.get(dateStr) || 0,
+      });
+    }
+
+    const categoryDistribution = categoryAgg.map((c) => ({
+      category: c._id,
+      count: c.count,
+    }));
+
+    const statusDistribution = statusAgg.map((s) => ({
+      status: s._id,
+      count: s.count,
+    }));
+
+    const severityDistribution = severityAgg.map((s) => ({
+      severity: s._id,
+      count: s.count,
+    }));
+
+    const avgResolutionTimeHours = Math.round(resolutionAgg[0]?.avgHours || 0);
 
     res.status(200).json({
       status: 'success',
@@ -387,6 +508,12 @@ export const getAdminStats = async (req, res, next) => {
         resolved,
         activeAlerts,
         rejectedIssues: rejected,
+        totalAffirmations,
+        avgResolutionTimeHours,
+        categoryDistribution,
+        statusDistribution,
+        severityDistribution,
+        recentVelocity,
       },
     });
   } catch (error) {
@@ -411,7 +538,8 @@ export const getAdminIssueById = async (req, res, next) => {
 
     const issue = await Issue.findById(id)
       .populate('createdBy', 'name email department role')
-      .populate('reviewedBy', 'name email role');
+      .populate('reviewedBy', 'name email role')
+      .populate('statusHistory.changedBy', 'name email role');
 
     if (!issue) {
       return res.status(404).json({
@@ -436,6 +564,121 @@ export const getAdminIssueById = async (req, res, next) => {
           confirmationCount,
         },
         comments,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * GET /api/admin/hotspots
+ * Aggregated campus hotspot analytics across standardized campus zones
+ */
+export const getCampusHotspots = async (req, res, next) => {
+  try {
+    const fourteenDaysAgo = new Date();
+    fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14);
+
+    const rawHotspots = await Issue.aggregate([
+      {
+        $group: {
+          _id: { $ifNull: ['$location.campusZone', 'academic_blocks'] },
+          totalReports: { $sum: 1 },
+          activeReports: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', ['reported', 'verified', 'in_progress']] },
+                1,
+                0,
+              ],
+            },
+          },
+          criticalReports: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$severity', 'critical'] },
+                    { $in: ['$status', ['reported', 'verified', 'in_progress']] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          resolvedReports: {
+            $sum: { $cond: [{ $eq: ['$status', 'resolved'] }, 1, 0] },
+          },
+          recentReports: {
+            $sum: {
+              $cond: [{ $gte: ['$createdAt', fourteenDaysAgo] }, 1, 0],
+            },
+          },
+          categories: { $push: '$category' },
+          buildings: { $addToSet: '$location.building' },
+        },
+      },
+    ]);
+
+    const hotspotMap = new Map();
+    rawHotspots.forEach((h) => {
+      const zoneKey = h._id || 'other';
+
+      const categoryCounts = {};
+      (h.categories || []).forEach((cat) => {
+        categoryCounts[cat] = (categoryCounts[cat] || 0) + 1;
+      });
+      const topCategories = Object.entries(categoryCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 2)
+        .map(([cat, count]) => ({ category: cat, count }));
+
+      const recurrenceScore =
+        h.activeReports * 2 + h.criticalReports * 3 + Math.round(h.recentReports * 1.5);
+
+      hotspotMap.set(zoneKey, {
+        zone: zoneKey,
+        totalReports: h.totalReports,
+        activeReports: h.activeReports,
+        criticalReports: h.criticalReports,
+        resolvedReports: h.resolvedReports,
+        recentReports: h.recentReports,
+        topCategories,
+        buildings: (h.buildings || []).filter(Boolean).slice(0, 4),
+        recurrenceScore,
+      });
+    });
+
+    const allHotspots = CAMPUS_ZONES.map((zone) => {
+      if (hotspotMap.has(zone)) {
+        return hotspotMap.get(zone);
+      }
+      return {
+        zone,
+        totalReports: 0,
+        activeReports: 0,
+        criticalReports: 0,
+        resolvedReports: 0,
+        recentReports: 0,
+        topCategories: [],
+        buildings: [],
+        recurrenceScore: 0,
+      };
+    });
+
+    allHotspots.sort((a, b) => {
+      if (b.recurrenceScore !== a.recurrenceScore) {
+        return b.recurrenceScore - a.recurrenceScore;
+      }
+      return b.activeReports - a.activeReports;
+    });
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        hotspots: allHotspots,
       },
     });
   } catch (error) {

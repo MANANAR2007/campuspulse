@@ -8,6 +8,7 @@ import { config } from './config/index.js';
 import apiRoutes from './routes/index.js';
 import { notFound } from './middleware/notFound.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { apiLimiter } from './middleware/rateLimiter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,8 +41,8 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// API Routes
-app.use('/api', apiRoutes);
+// API Routes (rate limited)
+app.use('/api', apiLimiter, apiRoutes);
 
 // Static frontend serving and SPA fallback for production / single-origin deployments
 if (config.nodeEnv === 'production' || fs.existsSync(clientDistPath)) {

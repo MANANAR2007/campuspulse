@@ -26,7 +26,8 @@ import SeverityBadge from '../components/common/SeverityBadge.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
 import CategoryBadge from '../components/common/CategoryBadge.jsx';
 import EmptyState from '../components/common/EmptyState.jsx';
-import { issuesAPI, commentsAPI } from '../services/api.js';
+import StatusHistoryTimeline from '../components/issues/StatusHistoryTimeline.jsx';
+import { issuesAPI, commentsAPI, getCampusZoneLabel } from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useSocket } from '../context/SocketContext.jsx';
 import { formatRelativeTime } from '../utils/formatters.js';
@@ -565,11 +566,16 @@ export default function IssueDetailsPage() {
 
           {/* Location & Author Snippet */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 border-t border-slate-100 text-xs">
-            <div className="flex items-center gap-2 text-slate-600">
-              <MapPin className="w-4 h-4 text-slate-400 shrink-0" />
-              <div>
-                <strong className="text-slate-800">{building}</strong>
-                {specificArea && <span className="text-slate-500"> • {specificArea}</span>}
+            <div className="flex items-start gap-2 text-slate-600">
+              <MapPin className="w-4 h-4 text-slate-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div>
+                  <strong className="text-slate-800">{building}</strong>
+                  {specificArea && <span className="text-slate-500"> • {specificArea}</span>}
+                </div>
+                <div className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 rounded-md">
+                  <span>Zone: {getCampusZoneLabel(issue.location?.campusZone)}</span>
+                </div>
               </div>
             </div>
 
@@ -638,55 +644,16 @@ export default function IssueDetailsPage() {
               </div>
             </div>
           )}
-
-          {/* Lifecycle Status Progress Bar */}
-          <div className="pt-4 border-t border-slate-100">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3">
-              Lifecycle Progress
-            </h3>
-            <div className="grid grid-cols-4 gap-2 text-center text-xs">
-              <div
-                className={`p-2.5 rounded-lg border font-medium ${
-                  ['reported', 'verified', 'in_progress', 'resolved'].includes(issue.status)
-                    ? 'bg-blue-50 border-blue-200 text-blue-800'
-                    : 'bg-slate-50 border-slate-100 text-slate-400'
-                }`}
-              >
-                <span>1. Reported</span>
-              </div>
-              <div
-                className={`p-2.5 rounded-lg border font-medium ${
-                  ['verified', 'in_progress', 'resolved'].includes(issue.status)
-                    ? 'bg-purple-50 border-purple-200 text-purple-800'
-                    : 'bg-slate-50 border-slate-100 text-slate-400'
-                }`}
-              >
-                <span>2. Verified</span>
-              </div>
-              <div
-                className={`p-2.5 rounded-lg border font-medium ${
-                  ['in_progress', 'resolved'].includes(issue.status)
-                    ? 'bg-amber-50 border-amber-200 text-amber-800'
-                    : 'bg-slate-50 border-slate-100 text-slate-400'
-                }`}
-              >
-                <span>3. In Progress</span>
-              </div>
-              <div
-                className={`p-2.5 rounded-lg border font-medium ${
-                  issue.status === 'resolved'
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                    : issue.status === 'rejected'
-                    ? 'bg-rose-50 border-rose-200 text-rose-800'
-                    : 'bg-slate-50 border-slate-100 text-slate-400'
-                }`}
-              >
-                <span>{issue.status === 'rejected' ? 'Rejected' : '4. Resolved'}</span>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
+
+      {/* Lifecycle Status & Chronological Audit Timeline */}
+      <StatusHistoryTimeline
+        statusHistory={issue.statusHistory}
+        currentStatus={issue.status}
+        createdAt={issue.createdAt}
+        reporter={issue.createdBy}
+      />
 
       {/* Persistent Community Discussion & Comments Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">

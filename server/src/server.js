@@ -40,7 +40,10 @@ const startServer = async () => {
     });
   } catch (error) {
     console.error('❌ Fatal Database Connection Error:', error.message);
-    console.error('💡 Please verify your MONGODB_URI in server/.env.');
+    console.error('💡 Troubleshooting Steps:');
+    console.error('   1. Verify MONGODB_URI is set in the runtime environment (Render dashboard in production, server/.env locally).');
+    console.error('   2. Verify that 0.0.0.0/0 (or your server IP) is allowed in MongoDB Atlas -> Network Access.');
+    console.error('   3. Ensure your MongoDB Atlas cluster is running and not paused.');
     process.exit(1);
   }
 };

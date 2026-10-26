@@ -23,5 +23,8 @@
     "multer": "^2.5.0",
     "socket.io": "^4.8.4",
     "socket.io-client": "^4.8.4"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0"
   }
 }
