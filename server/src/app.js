@@ -14,6 +14,7 @@ const __dirname = path.dirname(__filename);
 const clientDistPath = path.resolve(__dirname, '../../client/dist');
 
 const app = express();
+app.set('trust proxy', 1);
 
 // Security & Parsing Middleware
 const allowedOrigins = [
