@@ -2,6 +2,7 @@ import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
 import { SocketProvider } from './context/SocketContext.jsx';
+import { ToastProvider } from './context/ToastContext.jsx';
 
 // Layouts
 import AppLayout from './components/layout/AppLayout.jsx';
@@ -32,7 +33,8 @@ export default function App() {
   return (
     <AuthProvider>
       <SocketProvider>
-        <Routes>
+        <ToastProvider>
+          <Routes>
           {/* Guest Only Routes (Redirect if already authenticated based on role) */}
           <Route
             path="login"
@@ -119,7 +121,8 @@ export default function App() {
           {/* Fallback 404 handler */}
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
-      </SocketProvider>
-    </AuthProvider>
+      </ToastProvider>
+    </SocketProvider>
+  </AuthProvider>
   );
 }

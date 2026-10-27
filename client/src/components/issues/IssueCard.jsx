@@ -10,6 +10,7 @@ import {
   Check,
   ChevronRight,
   ImageIcon,
+  Layers,
 } from 'lucide-react';
 import SeverityBadge from '../common/SeverityBadge.jsx';
 import StatusBadge from '../common/StatusBadge.jsx';
@@ -98,6 +99,12 @@ export default function IssueCard({ issue }) {
             <span className="inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider bg-rose-600 text-white px-2 py-0.5 rounded">
               <Megaphone className="w-3 h-3" />
               Approved Alert
+            </span>
+          )}
+          {(issue.isIncidentGroup || issue.groupedReportsCount > 0) && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded">
+              <Layers className="w-3 h-3 text-indigo-600" />
+              Incident Group ({issue.groupedReportsCount} linked)
             </span>
           )}
           <SeverityBadge severity={issue.severity} size="xs" />

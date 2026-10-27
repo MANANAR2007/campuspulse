@@ -1110,8 +1110,182 @@ async function runTests() {
     const hasAssignAudit = auditData.data.logs.some((l) => l.action === 'issue_assigned' || l.action === 'issue_redirected');
     assert(hasAssignAudit, 'Audit trail logs "issue_assigned" or "issue_redirected" action with actor and reason');
 
-    // 20. Verifying Session Logout & Cookie Invalidation
-    console.log(`\n${cyan('20. Verifying Session Logout & Cookie Invalidation...')}`);
+    // 20. Smart Issue Grouping, Deduplication & Admin Incident Management
+    console.log(`\n${cyan('20. Verifying Smart Issue Grouping, Deduplication & Admin Incident Management...')}`);
+
+    // A. Student contributes child report to existing incident
+    const childReportRes = await fetch(`${BASE_URL}/api/issues`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: student2Cookie,
+      },
+      body: JSON.stringify({
+        title: 'Additional corridor leak near Room 204',
+        description: 'Water leak spreading into second floor hallway',
+        category: 'infrastructure',
+        severity: 'moderate',
+        location: {
+          building: 'Block B',
+          area: 'Second Floor Corridor',
+        },
+        parentIssueId: testIssueId,
+      }),
+    });
+    const childReportData = await childReportRes.json();
+    assert(childReportRes.status === 201, 'Student contributing child report to existing incident returns HTTP 201');
+    const childReportId = childReportData.data?.issue?.id || childReportData.data?.issue?._id;
+    assert(childReportId, 'Child report created and returns valid ID');
+
+    // Verify parent incident is updated with grouping metadata
+    const parentRes = await fetch(`${BASE_URL}/api/issues/${testIssueId}`, {
+      headers: { Cookie: studentCookie },
+    });
+    const parentData = await parentRes.json();
+    assert(parentRes.status === 200, 'GET /api/issues/:id on parent incident returns HTTP 200');
+    assert(parentData.data.issue.isIncidentGroup === true, 'Parent incident flagged with isIncidentGroup=true');
+    assert(parentData.data.issue.groupedReportsCount >= 1, 'Parent incident groupedReportsCount increments');
+    assert(Array.isArray(parentData.data.issue.linkedReports), 'Parent incident returns linkedReports array');
+    const hasChildInLinked = parentData.data.issue.linkedReports.some(
+      (r) => (r.id || r._id).toString() === childReportId.toString()
+    );
+    assert(hasChildInLinked, 'Parent linkedReports contains the contributed child report');
+    assert(parentData.data.issue.totalAffectedCount >= 2, 'Parent incident computes totalAffectedCount combining confirmations and linked reports');
+
+    // B. De-duplication in Student Public Feed
+    const feedRes = await fetch(`${BASE_URL}/api/issues`, {
+      headers: { Cookie: studentCookie },
+    });
+    const feedData = await feedRes.json();
+    assert(feedRes.status === 200, 'GET /api/issues returns HTTP 200');
+    const isChildInPublicFeed = feedData.data.issues.some(
+      (item) => (item.id || item._id).toString() === childReportId.toString()
+    );
+    assert(!isChildInPublicFeed, 'Student public feed de-duplicates reports (child reports excluded with parentIssueId: null)');
+
+    // C. Admin Grouping Two Distinct Reports
+    const reportARes = await fetch(`${BASE_URL}/api/issues`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: studentCookie,
+      },
+      body: JSON.stringify({
+        title: 'Water filter broken in Cafeteria',
+        description: 'Dispenser faucet leaking clean water continuously',
+        category: 'sanitation',
+        severity: 'low',
+        location: {
+          building: 'Dining Hall',
+          area: 'West Wing Faucet',
+        },
+      }),
+    });
+    const reportAData = await reportARes.json();
+    const reportAId = reportAData.data.issue.id || reportAData.data.issue._id;
+
+    const reportBRes = await fetch(`${BASE_URL}/api/issues`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: student2Cookie,
+      },
+      body: JSON.stringify({
+        title: 'Cafeteria water tap broken',
+        description: 'Second report of leaking faucet at dining hall',
+        category: 'sanitation',
+        severity: 'low',
+        location: {
+          building: 'Dining Hall',
+          area: 'West Wing Faucet',
+        },
+      }),
+    });
+    const reportBData = await reportBRes.json();
+    const reportBId = reportBData.data.issue.id || reportBData.data.issue._id;
+
+    // Admin groups report B into report A
+    const adminGroupRes = await fetch(`${BASE_URL}/api/admin/issues/${reportBId}/group`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        targetIncidentId: reportAId,
+        reason: 'Duplicate student report regarding same cafeteria water tap',
+      }),
+    });
+    assert(adminGroupRes.status === 200, 'Admin POST /api/admin/issues/:id/group returns HTTP 200');
+
+    // Verify report A updated
+    const updatedARes = await fetch(`${BASE_URL}/api/admin/issues/${reportAId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    const updatedAData = await updatedARes.json();
+    assert(updatedAData.data.issue.isIncidentGroup === true, 'Target issue becomes isIncidentGroup=true');
+    assert(updatedAData.data.issue.groupedReportsCount === 1, 'Target issue groupedReportsCount equals 1');
+
+    // Verify audit event logged for grouping
+    const groupAudit = await AuditEvent.findOne({ action: 'issue_grouped', entityId: reportBId });
+    assert(groupAudit !== null, 'AuditEvent recorded for issue_grouped action');
+
+    // D. Admin Ungroups Report B
+    const adminUngroupRes = await fetch(`${BASE_URL}/api/admin/issues/${reportBId}/ungroup`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        reason: 'Technician confirmed separate secondary fountain valve was damaged',
+      }),
+    });
+    assert(adminUngroupRes.status === 200, 'Admin POST /api/admin/issues/:id/ungroup returns HTTP 200');
+
+    const unlinkedBRes = await fetch(`${BASE_URL}/api/admin/issues/${reportBId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    const unlinkedBData = await unlinkedBRes.json();
+    assert(unlinkedBData.data.issue.parentIssueId === null, 'Unlinked issue parentIssueId is reset to null');
+
+    const unlinkedARes = await fetch(`${BASE_URL}/api/admin/issues/${reportAId}`, {
+      headers: { Cookie: adminCookie },
+    });
+    const unlinkedAData = await unlinkedARes.json();
+    assert(unlinkedAData.data.issue.groupedReportsCount === 0, 'Target issue groupedReportsCount decrements to 0');
+
+    // Verify audit event logged for ungrouping
+    const ungroupAudit = await AuditEvent.findOne({ action: 'issue_ungrouped', entityId: reportBId });
+    assert(ungroupAudit !== null, 'AuditEvent recorded for issue_ungrouped action');
+
+    // E. Confidentiality Privacy Rule Enforcement
+    const confGroupRes = await fetch(`${BASE_URL}/api/admin/issues/${confIssueId}/group`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        targetIncidentId: testIssueId,
+        reason: 'Attempting to group confidential report into public issue',
+      }),
+    });
+    assert(confGroupRes.status === 400, 'Attempting to group confidential issue into public incident returns HTTP 400 Bad Request');
+
+    // F. Admin Grouped-Only Filter Query
+    const adminGroupedRes = await fetch(`${BASE_URL}/api/admin/issues?groupedOnly=true`, {
+      headers: { Cookie: adminCookie },
+    });
+    const adminGroupedData = await adminGroupedRes.json();
+    assert(adminGroupedRes.status === 200, 'Admin GET /api/admin/issues?groupedOnly=true returns HTTP 200');
+    assert(
+      adminGroupedData.data.issues.every((i) => i.isIncidentGroup === true),
+      'Admin groupedOnly=true filter strictly returns issues with isIncidentGroup=true'
+    );
+
+    // 21. Verifying Session Logout & Cookie Invalidation
+    console.log(`\n${cyan('21. Verifying Session Logout & Cookie Invalidation...')}`);
     const logoutRes = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: 'POST',
       headers: { Cookie: studentCookie },
@@ -1128,12 +1302,22 @@ async function runTests() {
     studentSocket.disconnect();
     adminSocket.disconnect();
 
-    // 21. Cleanup
-    console.log(`\n${cyan('21. Cleaning up Test Artifacts...')}`);
+    // 22. Cleanup
+    console.log(`\n${cyan('22. Cleaning up Test Artifacts...')}`);
     if (testIssueId) {
       await Issue.findByIdAndDelete(testIssueId);
       await Comment.deleteMany({ issueId: testIssueId });
       await Notification.deleteMany({ issueId: testIssueId });
+    }
+    if (childReportId) {
+      await Issue.findByIdAndDelete(childReportId);
+      await Notification.deleteMany({ issueId: childReportId });
+    }
+    if (reportAId) {
+      await Issue.findByIdAndDelete(reportAId);
+    }
+    if (reportBId) {
+      await Issue.findByIdAndDelete(reportBId);
     }
     if (confIssueId) {
       await Issue.findByIdAndDelete(confIssueId);
@@ -1146,7 +1330,7 @@ async function runTests() {
       await User.findByIdAndDelete(testStudentUser.id);
     }
     await User.deleteMany({ email: { $in: [staffEmail, student2Email, spoofStaffEmail] } });
-    await AuditEvent.deleteMany({ entityId: { $in: [testIssueId, confIssueId, testDeptId] } });
+    await AuditEvent.deleteMany({ entityId: { $in: [testIssueId, childReportId, reportAId, reportBId, confIssueId, testDeptId] } });
 
     console.log(`  ${green('Test records cleaned up successfully.')}`);
 

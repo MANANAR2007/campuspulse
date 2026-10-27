@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import {
   PlusCircle,
   MapPin,
@@ -16,10 +16,12 @@ import {
   Image as ImageIcon,
   Radar,
   ExternalLink,
+  Link2,
 } from 'lucide-react';
 import { issuesAPI, departmentsAPI, CAMPUS_ZONES, ISSUE_VISIBILITIES } from '../services/api.js';
 import SeverityBadge from '../components/common/SeverityBadge.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
+import { useToast } from '../context/ToastContext.jsx';
 
 const FORM_CATEGORIES = [
   { id: 'infrastructure', label: 'Infrastructure & Buildings' },
@@ -44,6 +46,9 @@ const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 export default function NewIssuePage() {
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
+  const [searchParams] = useSearchParams();
+  const preselectedIncidentId = searchParams.get('incidentId');
+  const { showSuccess, showError } = useToast();
 
   const [formData, setFormData] = useState({
     title: '',
@@ -58,7 +63,32 @@ export default function NewIssuePage() {
     room: '',
     description: '',
     campusAlertRequested: false,
+    parentIssueId: preselectedIncidentId || undefined,
   });
+
+  const [linkedIncident, setLinkedIncident] = useState(null);
+
+  // If incidentId is provided in URL, prefill and link
+  useEffect(() => {
+    if (preselectedIncidentId) {
+      issuesAPI
+        .getById(preselectedIncidentId)
+        .then((res) => {
+          if (res?.data?.issue) {
+            const inc = res.data.issue;
+            setLinkedIncident(inc);
+            setFormData((prev) => ({
+              ...prev,
+              parentIssueId: inc.id || inc._id,
+              category: inc.category || prev.category,
+              campusZone: inc.location?.campusZone || prev.campusZone,
+              building: inc.location?.building || prev.building,
+            }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [preselectedIncidentId]);
 
   const [departments, setDepartments] = useState([]);
 
@@ -75,6 +105,23 @@ export default function NewIssuePage() {
   const [duplicateMatches, setDuplicateMatches] = useState([]);
   const [isCheckingDuplicates, setIsCheckingDuplicates] = useState(false);
   const [dismissDuplicates, setDismissDuplicates] = useState(false);
+
+  const handleJoinIncident = (dup) => {
+    setLinkedIncident(dup);
+    setFormData((prev) => ({
+      ...prev,
+      parentIssueId: dup.id || dup._id,
+      category: dup.category || prev.category,
+      campusZone: dup.location?.campusZone || prev.campusZone,
+      building: dup.location?.building || prev.building,
+    }));
+    setDismissDuplicates(true);
+    showSuccess(`Linked your report to: "${dup.title}"`);
+  };
+
+  const handleDismissDuplicates = () => {
+    setDismissDuplicates(true);
+  };
 
   // Image upload states
   const [selectedImage, setSelectedImage] = useState(null);
@@ -245,6 +292,12 @@ export default function NewIssuePage() {
           'campusAlertRequested',
           formData.campusAlertRequested ? 'true' : 'false'
         );
+        if (formData.parentIssueId || linkedIncident) {
+          multipartData.append(
+            'parentIssueId',
+            formData.parentIssueId || (linkedIncident ? (linkedIncident.id || linkedIncident._id) : '')
+          );
+        }
         multipartData.append('image', selectedImage);
 
         res = await issuesAPI.create(multipartData);
@@ -257,6 +310,9 @@ export default function NewIssuePage() {
           severity: formData.severity,
           visibility: formData.visibility,
           department: formData.department || undefined,
+          parentIssueId:
+            formData.parentIssueId ||
+            (linkedIncident ? (linkedIncident.id || linkedIncident._id) : undefined),
           location: {
             building: formData.building.trim(),
             campusZone: formData.campusZone,
@@ -271,12 +327,19 @@ export default function NewIssuePage() {
       }
 
       if (res && res.data && res.data.issue) {
+        showSuccess(
+          linkedIncident
+            ? 'Your report was added to an existing incident.'
+            : 'Report submitted successfully.'
+        );
         const newId = res.data.issue.id || res.data.issue._id;
         navigate(`/issues/${newId}`, { replace: true });
       } else {
+        showSuccess('Report submitted successfully.');
         navigate('/', { replace: true });
       }
     } catch (err) {
+      showError(err.message || 'Failed to submit report. Please check your inputs and try again.');
       setServerError(
         err.message || 'Failed to submit report. Please check your inputs and try again.'
       );
@@ -321,6 +384,32 @@ export default function NewIssuePage() {
         </div>
       )}
 
+      {/* Active Incident Group Contribution Banner */}
+      {linkedIncident && (
+        <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-blue-900 shadow-xs animate-fadeIn">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <Link2 className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+            <div className="space-y-0.5 min-w-0">
+              <span className="font-semibold text-blue-950 block">Contributing to Existing Campus Incident</span>
+              <p className="truncate text-slate-700">
+                "{linkedIncident.title}" ({linkedIncident.location?.building || 'Campus'})
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setLinkedIncident(null);
+              setFormData((prev) => ({ ...prev, parentIssueId: undefined }));
+              showInfo('Report unlinked. It will now be submitted as a separate standalone ticket.');
+            }}
+            className="self-start sm:self-center shrink-0 px-2.5 py-1 text-[11px] font-semibold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors"
+          >
+            Submit as separate issue
+          </button>
+        </div>
+      )}
+
       {/* Main Form */}
       <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">
         {/* Title */}
@@ -356,59 +445,101 @@ export default function NewIssuePage() {
             <p className="mt-1 text-xs text-slate-400">Summarize the core problem concisely (5-150 characters).</p>
           )}
 
-          {/* Duplicate Radar Pre-Submission Suggestion Panel */}
-          {duplicateMatches.length > 0 && !dismissDuplicates && (
-            <div className="mt-3 p-4 bg-amber-50/90 border border-amber-300 rounded-xl space-y-3 transition-all animate-fadeIn">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 text-amber-900">
-                  <Radar className="w-4 h-4 text-amber-600 animate-pulse" />
+          {/* Smart Grouping / Duplicate Radar Suggestion Panel */}
+          {duplicateMatches.length > 0 && !dismissDuplicates && !linkedIncident && (
+            <div className="mt-3 p-4 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-300 rounded-xl space-y-3 transition-all shadow-xs animate-fadeIn">
+              <div className="flex items-start justify-between gap-2 border-b border-amber-200 pb-2">
+                <div className="flex items-center gap-2 text-amber-950">
+                  <Radar className="w-4 h-4 text-amber-600 animate-pulse shrink-0" />
                   <span className="font-bold text-xs uppercase tracking-wider">
-                    Duplicate Radar: {duplicateMatches.length} Similar Issue{duplicateMatches.length > 1 ? 's' : ''} Already Reported Nearby
+                    This issue may already have been reported.
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setDismissDuplicates(true)}
-                  className="text-amber-700 hover:text-amber-900 text-xs font-medium px-2 py-0.5 rounded hover:bg-amber-100 transition-colors"
+                  onClick={handleDismissDuplicates}
+                  className="text-amber-800 hover:text-amber-950 text-xs font-semibold px-2 py-0.5 rounded hover:bg-amber-200/50 transition-colors"
                 >
-                  Dismiss Warning
+                  Dismiss
                 </button>
               </div>
-              <p className="text-xs text-amber-800 leading-relaxed">
-                Before submitting a new report, verify if one of these existing campus reports covers the same problem. You can view, affirm, and receive alerts on existing tickets to prioritize campus maintenance.
-              </p>
-              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                {duplicateMatches.map((dup) => (
-                  <div
-                    key={dup.id || dup._id}
-                    className="bg-white border border-amber-200/90 rounded-lg p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:border-amber-400 transition-all shadow-2xs"
-                  >
-                    <div className="space-y-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-xs text-slate-900 truncate max-w-[280px]">
-                          {dup.title}
-                        </span>
+
+              <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                {duplicateMatches.slice(0, 3).map((dup) => {
+                  const id = dup.id || dup._id;
+                  const totalAffected = (dup.confirmationCount || 0) + (dup.groupedReportsCount || 0) + 1;
+                  const deptName = dup.department?.name || 'Facilities Management';
+
+                  return (
+                    <div
+                      key={id}
+                      className="bg-white border border-amber-200 rounded-xl p-3.5 space-y-2.5 shadow-2xs hover:border-amber-300 transition-all"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className="font-bold text-sm text-slate-900 leading-snug">
+                          "{dup.title}"
+                        </h4>
                         <StatusBadge status={dup.status} size="xs" />
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">
-                        <span>📍 {dup.location?.building}</span>
-                        <span>•</span>
-                        <span className="text-indigo-600 font-medium">
-                          👥 {dup.confirmationCount || 0} students affected
-                        </span>
+
+                      <ul className="text-xs text-slate-600 space-y-1">
+                        <li className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
+                          <span>
+                            <strong className="text-slate-900 font-semibold">{totalAffected} students</strong> have reported or confirmed this issue.
+                          </span>
+                        </li>
+                        {dup.groupedReportsCount > 0 && (
+                          <li className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                            <span>
+                              <strong className="text-slate-900 font-semibold">{dup.groupedReportsCount}</strong> related reports grouped under this incident.
+                            </span>
+                          </li>
+                        )}
+                        <li className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                          <span>
+                            Currently assigned to: <span className="font-semibold text-slate-800">{deptName}</span>.
+                          </span>
+                        </li>
+                        <li className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                          <span>
+                            Status: <span className="font-semibold text-slate-800 capitalize">{dup.status?.replace('_', ' ')}</span>.
+                          </span>
+                        </li>
+                      </ul>
+
+                      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+                        <Link
+                          to={`/issues/${id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-colors"
+                        >
+                          <span>View existing issue</span>
+                          <ExternalLink className="w-3 h-3 text-slate-500" />
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => handleJoinIncident(dup)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-xs transition-colors"
+                        >
+                          <PlusCircle className="w-3.5 h-3.5" />
+                          <span>Add my report</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDismissDuplicates}
+                          className="text-xs font-medium text-slate-500 hover:text-slate-800 px-2 py-1.5 transition-colors"
+                        >
+                          Report a different issue
+                        </button>
                       </div>
                     </div>
-                    <Link
-                      to={`/issues/${dup.id || dup._id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors shadow-xs"
-                    >
-                      <span>View & Support This</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </Link>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

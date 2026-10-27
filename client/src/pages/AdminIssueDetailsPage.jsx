@@ -23,6 +23,9 @@ import {
   Send,
   Calendar,
   History,
+  Layers,
+  Link2,
+  Plus,
 } from 'lucide-react';
 import SeverityBadge from '../components/common/SeverityBadge.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
@@ -38,6 +41,7 @@ import {
   ISSUE_PRIORITIES,
 } from '../services/api.js';
 import { useSocket } from '../context/SocketContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
 import { formatRelativeTime, formatDate } from '../utils/formatters.js';
 
 export default function AdminIssueDetailsPage() {
@@ -101,6 +105,85 @@ export default function AdminIssueDetailsPage() {
 
   // Image lightbox
   const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  // Grouping Modals State
+  const { showSuccess, showError } = useToast();
+  const [groupModalOpen, setGroupModalOpen] = useState(false);
+  const [ungroupModalOpen, setUngroupModalOpen] = useState(false);
+  const [targetIncidentId, setTargetIncidentId] = useState('');
+  const [groupReason, setGroupReason] = useState('');
+  const [candidateIncidents, setCandidateIncidents] = useState([]);
+
+  const handleOpenGroupModal = async () => {
+    setGroupReason('');
+    setTargetIncidentId('');
+    setGroupModalOpen(true);
+    try {
+      const res = await adminAPI.getIssues({ limit: 40 });
+      if (res?.data?.issues) {
+        setCandidateIncidents(
+          res.data.issues.filter(
+            (i) => (i.id || i._id) !== id && !i.parentIssueId && i.status !== 'rejected'
+          )
+        );
+      }
+    } catch {
+      // non-blocking
+    }
+  };
+
+  const handleGroupSubmit = async (e) => {
+    e.preventDefault();
+    if (!targetIncidentId) {
+      showError('Please select a target incident group.');
+      return;
+    }
+    setIsProcessing(true);
+    try {
+      await adminAPI.groupIssue(id, {
+        targetIncidentId,
+        reason: groupReason ? groupReason.trim() : 'Grouped by administrator',
+      });
+      showSuccess('Report successfully grouped into incident.');
+      setGroupModalOpen(false);
+      fetchIssueDetails();
+    } catch (err) {
+      showError(err.message || 'Failed to group report.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUngroupSubmit = async (e) => {
+    e.preventDefault();
+    setIsProcessing(true);
+    try {
+      await adminAPI.ungroupIssue(id, {
+        reason: groupReason ? groupReason.trim() : 'Unlinked by administrator',
+      });
+      showSuccess('Report unlinked from incident group.');
+      setUngroupModalOpen(false);
+      fetchIssueDetails();
+    } catch (err) {
+      showError(err.message || 'Failed to ungroup report.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleUngroupChild = async (childId) => {
+    if (!window.confirm('Are you sure you want to unlink this student report from this incident?')) return;
+    setIsProcessing(true);
+    try {
+      await adminAPI.ungroupIssue(childId, { reason: 'Unlinked by administrator' });
+      showSuccess('Report unlinked successfully.');
+      fetchIssueDetails();
+    } catch (err) {
+      showError(err.message || 'Failed to unlink report.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const fetchIssueDetails = useCallback(async () => {
     setLoading(true);
@@ -448,6 +531,42 @@ export default function AdminIssueDetailsPage() {
         </div>
       ) : null}
 
+      {/* Linked Parent Incident Banner */}
+      {issue.parentIssue && (
+        <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-900 shadow-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Layers className="w-5 h-5 text-indigo-600 shrink-0" />
+            <div className="min-w-0">
+              <span className="font-semibold block text-indigo-950">
+                This report is part of a shared campus incident group
+              </span>
+              <p className="truncate text-slate-700">
+                Incident: "{issue.parentIssue.title}"
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link
+              to={`/admin/issues/${issue.parentIssue.id || issue.parentIssue._id}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition-colors"
+            >
+              <span>View Parent Incident</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setGroupReason('');
+                setUngroupModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-rose-700 bg-white border border-rose-300 hover:bg-rose-50 rounded-lg transition-colors"
+            >
+              Unlink
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Main Grid: Details + Admin Action Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column: Report Information (2 cols) */}
@@ -510,6 +629,85 @@ export default function AdminIssueDetailsPage() {
               </div>
             )}
           </div>
+
+          {/* Linked Student Reports (Incident Group) */}
+          {(issue.isIncidentGroup || (issue.linkedReports && issue.linkedReports.length > 0)) && (
+            <section className="bg-white rounded-xl border border-slate-200 shadow-xs p-6 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-indigo-600" />
+                  <h2 className="text-base font-bold text-slate-900">
+                    Linked Student Reports ({issue.linkedReports?.length || 0})
+                  </h2>
+                </div>
+                <span className="text-xs text-slate-500 font-medium">
+                  Preserved Individual Evidence
+                </span>
+              </div>
+
+              {issue.linkedReports && issue.linkedReports.length > 0 ? (
+                <div className="space-y-3">
+                  {issue.linkedReports.map((child) => (
+                    <div
+                      key={child._id || child.id}
+                      className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2 text-xs"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 font-semibold text-slate-900">
+                          <span>{child.createdBy?.name || 'Student Reporter'}</span>
+                          <span className="text-slate-400 font-normal">•</span>
+                          <span className="text-slate-500 font-normal">
+                            {formatRelativeTime(child.createdAt)}
+                          </span>
+                          {child.visibility !== 'public' && (
+                            <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
+                              {child.visibility}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={child.status} size="xs" />
+                          <button
+                            type="button"
+                            onClick={() => handleUngroupChild(child._id || child.id)}
+                            className="text-[11px] font-semibold text-rose-600 hover:text-rose-800 hover:underline"
+                          >
+                            Unlink
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-slate-700 leading-relaxed font-normal">{child.description}</p>
+                      {(child.location?.building || child.location?.area || child.location?.room || child.location?.floor) && (
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                          <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>
+                            {[child.location.building, child.location.floor, child.location.room, child.location.area]
+                              .filter(Boolean)
+                              .join(' • ')}
+                          </span>
+                        </div>
+                      )}
+                      {child.imageUrl && (
+                        <div className="pt-1">
+                          <a href={child.imageUrl} target="_blank" rel="noopener noreferrer">
+                            <img
+                              src={child.imageUrl}
+                              alt="Report Evidence"
+                              className="w-20 h-20 object-cover rounded-lg border border-slate-200 hover:opacity-90"
+                            />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-4 text-xs text-slate-400 bg-slate-50 rounded-lg">
+                  No additional student reports linked yet.
+                </div>
+              )}
+            </section>
+          )}
 
           {/* Issue Lifecycle Timeline & Audit Trail */}
           <StatusHistoryTimeline
@@ -764,6 +962,30 @@ export default function AdminIssueDetailsPage() {
                   Set Visibility
                 </button>
               </div>
+
+              {/* Grouping Actions */}
+              {issue.parentIssue ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGroupReason('');
+                    setUngroupModalOpen(true);
+                  }}
+                  className="w-full py-1.5 px-2.5 rounded-lg border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Link2 className="w-3.5 h-3.5" />
+                  <span>Unlink from Incident Group</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleOpenGroupModal}
+                  className="w-full py-1.5 px-2.5 rounded-lg border border-indigo-300 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>Group into Shared Incident</span>
+                </button>
+              )}
 
               {issue.assignedTo && (
                 <button
@@ -1270,6 +1492,129 @@ export default function AdminIssueDetailsPage() {
                 >
                   {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Save Visibility</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Group Incident Modal */}
+      {groupModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-2.5 mb-2">
+              <div className="p-2 bg-indigo-50 text-indigo-700 rounded-lg">
+                <Layers className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  Group Report into Incident
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Link this report as a child of a primary campus incident.
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleGroupSubmit} className="space-y-4 text-xs pt-2">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Select Primary Incident Group *
+                </label>
+                <select
+                  required
+                  value={targetIncidentId}
+                  onChange={(e) => setTargetIncidentId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl border-slate-200 font-medium"
+                >
+                  <option value="">Select an active primary incident...</option>
+                  {candidateIncidents.map((cand) => (
+                    <option key={cand.id || cand._id} value={cand.id || cand._id}>
+                      [{cand.category}] {cand.title} ({cand.status}) - {cand.location?.building || 'Campus'}
+                    </option>
+                  ))}
+                </select>
+                {candidateIncidents.length === 0 && (
+                  <p className="text-[11px] text-slate-400 mt-1">No other active incidents found.</p>
+                )}
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Grouping Reason / Notes
+                </label>
+                <textarea
+                  rows={3}
+                  value={groupReason}
+                  onChange={(e) => setGroupReason(e.target.value)}
+                  placeholder="e.g. Duplicate report regarding the same water leak in Block B..."
+                  className="w-full px-3 py-2 border rounded-xl border-slate-200"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setGroupModalOpen(false)}
+                  className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isProcessing || !targetIncidentId}
+                  className="px-4 py-2 font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5"
+                >
+                  {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Group Report</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Ungroup Modal */}
+      {ungroupModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              Unlink Report from Incident
+            </h3>
+            <p className="text-xs text-slate-500 mb-4">
+              This report will become an independent report again and reappear in feeds according to its status.
+            </p>
+
+            <form onSubmit={handleUngroupSubmit} className="space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Reason for Unlinking
+                </label>
+                <textarea
+                  rows={3}
+                  value={groupReason}
+                  onChange={(e) => setGroupReason(e.target.value)}
+                  placeholder="e.g. Distinct issue with separate root cause..."
+                  className="w-full px-3 py-2 border rounded-xl border-slate-200"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setUngroupModalOpen(false)}
+                  className="px-4 py-2 font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isProcessing}
+                  className="px-4 py-2 font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs disabled:opacity-60 inline-flex items-center gap-1.5"
+                >
+                  {isProcessing && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Unlink Report</span>
                 </button>
               </div>
             </form>

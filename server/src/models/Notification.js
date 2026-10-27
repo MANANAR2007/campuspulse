@@ -11,6 +11,8 @@ export const NOTIFICATION_TYPES = [
   'issue_reopened',
   'issue_resolved',
   'issue_escalated',
+  'issue_grouped',
+  'issue_ungrouped',
 ];
 
 const notificationSchema = new mongoose.Schema(

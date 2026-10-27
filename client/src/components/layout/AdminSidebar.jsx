@@ -24,43 +24,39 @@ export default function AdminSidebar({ isOpen, onClose }) {
     navigate('/login');
   };
 
-  const currentView = new URLSearchParams(location.search).get('view') || 'overview';
+  const rawView = new URLSearchParams(location.search).get('view') || 'overview';
+  let activeNavKey = 'overview';
+  if (rawView === 'issues' || rawView === 'queue' || rawView === 'alerts') {
+    activeNavKey = 'issues';
+  } else if (rawView === 'operations' || rawView === 'departments' || rawView === 'staff') {
+    activeNavKey = 'operations';
+  } else if (rawView === 'audit') {
+    activeNavKey = 'audit';
+  }
 
   const navItems = [
     {
-      to: '/admin',
+      to: '/admin?view=overview',
       viewKey: 'overview',
-      label: 'Admin Overview',
+      label: 'Overview',
       icon: LayoutDashboard,
     },
     {
-      to: '/admin?view=queue',
-      viewKey: 'queue',
-      label: 'Issue Review Queue',
+      to: '/admin?view=issues',
+      viewKey: 'issues',
+      label: 'Issues & Incidents',
       icon: FileCheck,
     },
     {
-      to: '/admin?view=departments',
-      viewKey: 'departments',
-      label: 'Departments & Routing',
+      to: '/admin?view=operations',
+      viewKey: 'operations',
+      label: 'Operations',
       icon: Building2,
-    },
-    {
-      to: '/admin?view=staff',
-      viewKey: 'staff',
-      label: 'Staff Accounts',
-      icon: Users,
-    },
-    {
-      to: '/admin?view=alerts',
-      viewKey: 'alerts',
-      label: 'Campus Alert Management',
-      icon: Megaphone,
     },
     {
       to: '/admin?view=audit',
       viewKey: 'audit',
-      label: 'System Audit Trail',
+      label: 'Audit Trail',
       icon: FileText,
     },
   ];
@@ -112,11 +108,7 @@ export default function AdminSidebar({ isOpen, onClose }) {
           </div>
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive =
-              location.pathname === '/admin' &&
-              (item.viewKey === 'overview'
-                ? currentView === 'overview' && !location.search.includes('view=')
-                : currentView === item.viewKey);
+            const isActive = location.pathname === '/admin' && activeNavKey === item.viewKey;
 
             return (
               <NavLink

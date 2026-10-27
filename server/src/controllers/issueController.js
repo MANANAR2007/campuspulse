@@ -111,6 +111,7 @@ export const attachConfirmationData = async (issues, userId = null) => {
     const idStr = (obj.id || obj._id).toString();
     obj.confirmationCount = countMap.get(idStr) || 0;
     obj.currentUserConfirmed = userConfirmSet.has(idStr);
+    obj.totalAffectedCount = (obj.confirmationCount || 0) + (obj.groupedReportsCount || 0) + 1;
     return obj;
   });
 };
@@ -288,6 +289,26 @@ export const createIssue = async (req, res, next) => {
     const assignedDepartment =
       department && mongoose.Types.ObjectId.isValid(department) ? department : null;
 
+    // Smart Issue Grouping validation
+    const rawParentId = req.body.parentIssueId || req.body.parentIncidentId;
+    let validParentId = null;
+    let parentIncident = null;
+
+    if (rawParentId && mongoose.Types.ObjectId.isValid(rawParentId)) {
+      parentIncident = await Issue.findById(rawParentId);
+      if (parentIncident && parentIncident.status !== 'rejected') {
+        // Enforce privacy rule: confidential reports must never automatically join a public incident
+        if (normalizedVisibility === 'confidential' && parentIncident.visibility === 'public') {
+          return res.status(400).json({
+            status: 'fail',
+            message: 'Confidential reports cannot be grouped into a public incident.',
+          });
+        }
+        // Link to root incident (if parent is itself a child, link to root)
+        validParentId = parentIncident.parentIssueId || parentIncident._id;
+      }
+    }
+
     let newIssue;
     try {
       newIssue = await Issue.create({
@@ -302,6 +323,7 @@ export const createIssue = async (req, res, next) => {
         visibility: normalizedVisibility,
         department: assignedDepartment,
         priority: 'normal',
+        parentIssueId: validParentId,
         // Protected fields strictly enforced by backend
         createdBy: req.user._id,
         status: 'reported',
@@ -309,7 +331,9 @@ export const createIssue = async (req, res, next) => {
           {
             status: 'reported',
             changedBy: req.user._id,
-            note: 'Initial report submitted by student',
+            note: validParentId
+              ? 'Report contributed to existing campus incident group'
+              : 'Initial report submitted by student',
             timestamp: new Date(),
           },
         ],
@@ -324,6 +348,29 @@ export const createIssue = async (req, res, next) => {
         await deleteFromCloudinary(uploadedImagePublicId);
       }
       throw dbError;
+    }
+
+    // Update parent incident if grouped
+    if (validParentId) {
+      await Issue.findByIdAndUpdate(validParentId, {
+        $set: { isIncidentGroup: true },
+        $inc: { groupedReportsCount: 1 },
+      });
+      const rootParent = await Issue.findById(validParentId);
+      if (
+        rootParent &&
+        rootParent.createdBy &&
+        rootParent.createdBy.toString() !== req.user._id.toString()
+      ) {
+        await createNotification({
+          recipient: rootParent.createdBy,
+          actor: req.user._id,
+          issue: rootParent._id,
+          type: 'issue_grouped',
+          title: 'Related Report Added to Incident',
+          message: `${req.user.name} contributed a related report to "${rootParent.title}".`,
+        });
+      }
     }
 
     const populatedIssue = await Issue.findById(newIssue._id)
@@ -381,6 +428,13 @@ export const getIssues = async (req, res, next) => {
       // Never show rejected reports in normal student feed
       status: { $ne: 'rejected' },
     };
+
+    // Feed de-duplication: By default only display root issues (standalone or canonical incidents)
+    if (req.query.includeChildReports !== 'true' && !req.query.parentIssueId) {
+      filter.parentIssueId = null;
+    } else if (req.query.parentIssueId && mongoose.Types.ObjectId.isValid(req.query.parentIssueId)) {
+      filter.parentIssueId = req.query.parentIssueId;
+    }
 
     // Specific status filter (cannot filter for 'rejected' in public feed)
     if (status && typeof status === 'string') {
@@ -638,6 +692,33 @@ export const getIssueById = async (req, res, next) => {
     const issueObj = issue.toObject();
     issueObj.confirmationCount = confirmationCount;
     issueObj.currentUserConfirmed = Boolean(userConfirm);
+
+    // Linked reports and grouping metadata
+    if (!issue.parentIssueId) {
+      // Find linked child reports
+      const rawChildReports = await Issue.find({
+        parentIssueId: issue._id,
+        status: { $ne: 'rejected' },
+      })
+        .sort({ createdAt: -1 })
+        .populate('createdBy', 'name email department role');
+
+      // Privacy enforcement: filter child reports based on requesting user permissions
+      const visibleChildReports = rawChildReports.filter((child) => canUserViewIssue(req.user, child));
+
+      issueObj.linkedReports = visibleChildReports.map((c) => (c.toObject ? c.toObject() : c));
+      issueObj.linkedReportsCount = visibleChildReports.length;
+      issueObj.totalAffectedCount = (confirmationCount || 0) + visibleChildReports.length + 1;
+    } else {
+      // If child report, populate parent incident details
+      const parent = await Issue.findById(issue.parentIssueId)
+        .select('title status department category location isCampusWideAlert')
+        .populate('department', 'name code');
+      issueObj.parentIssue = parent ? (parent.toObject ? parent.toObject() : parent) : null;
+      issueObj.linkedReports = [];
+      issueObj.linkedReportsCount = 0;
+      issueObj.totalAffectedCount = (confirmationCount || 0) + 1;
+    }
 
     res.status(200).json({
       status: 'success',
@@ -1113,6 +1194,7 @@ export const checkDuplicateIssues = async (req, res, next) => {
     // Query non-rejected reports matching privacy filter and keywords
     const candidates = await Issue.find({
       status: { $ne: 'rejected' },
+      parentIssueId: null, // Suggest only root/canonical incidents
       $and: [
         duplicatePrivacyFilter,
         { $or: conditions },
@@ -1120,7 +1202,9 @@ export const checkDuplicateIssues = async (req, res, next) => {
     })
       .sort({ createdAt: -1 })
       .limit(30)
-      .populate('createdBy', 'name email department role');
+      .populate('createdBy', 'name email department role')
+      .populate('department', 'name code isActive')
+      .populate('assignedTo', 'name email');
 
     // Score and rank candidates based on similarity
     const scoredCandidates = candidates.map((issue) => {

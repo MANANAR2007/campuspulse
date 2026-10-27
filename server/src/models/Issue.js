@@ -379,13 +379,51 @@ const issueSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    // Smart Issue Grouping & Canonical Incident Relationships
+    parentIssueId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Issue',
+      default: null,
+      index: true,
+    },
+    isIncidentGroup: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    groupedReportsCount: {
+      type: Number,
+      default: 0,
+      index: true,
+    },
+    canonicalTitle: {
+      type: String,
+      trim: true,
+      maxlength: [150, 'Canonical title cannot exceed 150 characters'],
+      default: '',
+    },
+    groupingReason: {
+      type: String,
+      trim: true,
+      maxlength: [1000, 'Grouping reason cannot exceed 1000 characters'],
+      default: '',
+    },
+    groupedAt: {
+      type: Date,
+      default: null,
+    },
+    groupedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
   },
   {
     timestamps: true,
     toJSON: {
       transform: (doc, ret) => {
         ret.id = ret._id.toString();
-        delete ret._id;
+        ret._id = ret._id.toString();
         delete ret.__v;
         return ret;
       },
@@ -393,13 +431,17 @@ const issueSchema = new mongoose.Schema(
     toObject: {
       transform: (doc, ret) => {
         ret.id = ret._id.toString();
-        delete ret._id;
+        ret._id = ret._id.toString();
         delete ret.__v;
         return ret;
       },
     },
   }
 );
+
+// Compound and search indexes
+issueSchema.index({ parentIssueId: 1, createdAt: -1 });
+issueSchema.index({ isIncidentGroup: 1, status: 1 });
 
 // Compound and search indexes
 issueSchema.index({ status: 1, createdAt: -1 });

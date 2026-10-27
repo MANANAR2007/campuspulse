@@ -336,6 +336,20 @@ export const adminAPI = {
       body: data,
     }),
 
+  // POST /api/admin/issues/:id/group
+  groupIssue: (id, data) =>
+    request(`/admin/issues/${id}/group`, {
+      method: 'POST',
+      body: data,
+    }),
+
+  // POST /api/admin/issues/:id/ungroup
+  ungroupIssue: (id, data = {}) =>
+    request(`/admin/issues/${id}/ungroup`, {
+      method: 'POST',
+      body: data,
+    }),
+
   // GET /api/admin/staff
   getStaff: () =>
     request('/admin/staff', {
@@ -475,6 +489,42 @@ export const CAMPUS_ZONES = [
 export function getCampusZoneLabel(zoneKey) {
   const match = CAMPUS_ZONES.find((z) => z.value === zoneKey);
   return match ? match.label : zoneKey ? zoneKey.replace('_', ' ') : 'Campus';
+}
+
+/**
+ * Standardized Campus Issue Enums and Labels
+ */
+export const ISSUE_CATEGORIES = [
+  'infrastructure',
+  'electrical',
+  'plumbing',
+  'it_wifi',
+  'safety',
+  'sanitation',
+  'other',
+];
+
+export const ISSUE_SEVERITIES = ['low', 'moderate', 'high', 'critical'];
+
+export const ISSUE_STATUSES = [
+  'reported',
+  'verified',
+  'in_progress',
+  'resolved',
+  'rejected',
+];
+
+export function getCategoryLabel(cat) {
+  const map = {
+    infrastructure: 'Infrastructure',
+    electrical: 'Electrical & Power',
+    plumbing: 'Plumbing & Water',
+    it_wifi: 'IT / Wi-Fi',
+    safety: 'Campus Safety',
+    sanitation: 'Sanitation & Hygiene',
+    other: 'Other Facilities',
+  };
+  return map[cat] || cat || 'General';
 }
 
 /**

@@ -22,6 +22,7 @@ import {
   emitStatusChanged,
   emitAlertApproved,
   emitIssueUpdated,
+  getIO,
 } from '../utils/socket.js';
 
 /**
@@ -109,6 +110,19 @@ export const getAdminIssues = async (req, res, next) => {
       ];
     }
 
+    if (req.query.groupedOnly === 'true') {
+      filter.isIncidentGroup = true;
+    }
+
+    // Default to root incidents/reports unless explicitly filtering child reports
+    if (
+      req.query.includeChildReports !== 'true' &&
+      req.query.groupedOnly !== 'true' &&
+      !filter.parentIssueId
+    ) {
+      filter.parentIssueId = null;
+    }
+
     let sortOptions = { createdAt: -1 };
     if (sort === 'oldest') sortOptions = { createdAt: 1 };
     if (sort === 'severity' || sort === 'urgency') sortOptions = { severity: 1, createdAt: -1 };
@@ -127,6 +141,7 @@ export const getAdminIssues = async (req, res, next) => {
         .populate('reviewedBy', 'name email role')
         .populate('assignedTo', 'name email department departmentName')
         .populate('department', 'name code isActive')
+        .populate('parentIssueId', 'title status department isCampusWideAlert')
         .populate('statusHistory.changedBy', 'name email role'),
       Issue.countDocuments(filter),
     ]);
@@ -644,21 +659,35 @@ export const getAdminIssueById = async (req, res, next) => {
       });
     }
 
-    const [confirmationCount, comments] = await Promise.all([
+    const [confirmationCount, comments, linkedReports, parentIssue] = await Promise.all([
       IssueConfirmation.countDocuments({ issue: issue._id }),
       Comment.find({ issue: issue._id })
         .sort({ createdAt: 1 })
         .populate('author', 'name email role department'),
+      Issue.find({ parentIssueId: issue._id, status: { $ne: 'rejected' } })
+        .sort({ createdAt: -1 })
+        .populate('createdBy', 'name email department role'),
+      issue.parentIssueId
+        ? Issue.findById(issue.parentIssueId)
+            .select('title status department category location isCampusWideAlert')
+            .populate('department', 'name code')
+        : Promise.resolve(null),
     ]);
+
+    const issueObj = {
+      ...issue.toObject(),
+      id: issue._id.toString(),
+      confirmationCount,
+      linkedReports: linkedReports.map((c) => (c.toObject ? c.toObject() : c)),
+      linkedReportsCount: linkedReports.length,
+      parentIssue: parentIssue ? (parentIssue.toObject ? parentIssue.toObject() : parentIssue) : null,
+      totalAffectedCount: (confirmationCount || 0) + linkedReports.length + 1,
+    };
 
     res.status(200).json({
       status: 'success',
       data: {
-        issue: {
-          ...issue.toObject(),
-          id: issue._id.toString(),
-          confirmationCount,
-        },
+        issue: issueObj,
         comments,
       },
     });
@@ -1655,6 +1684,286 @@ export const getAuditLogs = async (req, res, next) => {
           hasNextPage: page < totalPages,
           hasPrevPage: page > 1,
         },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/issues/:id/group
+ * Group an issue into a parent incident, or group multiple reports into a canonical incident
+ */
+export const groupIssue = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { targetIncidentId, childIssueIds, reason = '' } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid issue ID format.',
+      });
+    }
+
+    // Determine target root and child issues to group
+    let targetId = targetIncidentId;
+    let childrenToGroup = [];
+
+    if (childIssueIds && Array.isArray(childIssueIds) && childIssueIds.length > 0) {
+      // Grouping multiple issues into issue :id as canonical target
+      targetId = id;
+      childrenToGroup = childIssueIds.filter((cid) => mongoose.Types.ObjectId.isValid(cid) && cid !== id);
+    } else if (targetIncidentId && mongoose.Types.ObjectId.isValid(targetIncidentId)) {
+      // Grouping issue :id into targetIncidentId
+      targetId = targetIncidentId;
+      childrenToGroup = [id];
+    } else {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'A valid target incident ID or child issue IDs must be provided.',
+      });
+    }
+
+    if (childrenToGroup.length === 0) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'No valid child issues provided for grouping.',
+      });
+    }
+
+    const targetIncident = await Issue.findById(targetId);
+    if (!targetIncident) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Target incident not found.',
+      });
+    }
+
+    // Target incident cannot be a child of another incident (must be a root incident)
+    if (targetIncident.parentIssueId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Target incident cannot be a child of another incident.',
+      });
+    }
+
+    // Load child reports
+    const children = await Issue.find({ _id: { $in: childrenToGroup } });
+
+    // Validate each child report
+    for (const child of children) {
+      if (child._id.toString() === targetIncident._id.toString()) {
+        continue;
+      }
+      // Confidentiality check: Confidential reports must never join a public incident
+      if (child.visibility === 'confidential' && targetIncident.visibility === 'public') {
+        return res.status(400).json({
+          status: 'fail',
+          message: `Report "${child.title}" is confidential and cannot be grouped into a public incident.`,
+        });
+      }
+    }
+
+    const trimmedReason = reason.trim() || 'Duplicate / related campus issue grouped by administrator';
+
+    // Update child issues
+    const validChildIds = children.map((c) => c._id);
+    await Issue.updateMany(
+      { _id: { $in: validChildIds } },
+      {
+        $set: {
+          parentIssueId: targetIncident._id,
+          groupingReason: trimmedReason,
+          groupedBy: req.user._id,
+          groupedAt: new Date(),
+        },
+      }
+    );
+
+    // Update target incident
+    targetIncident.isIncidentGroup = true;
+    const currentGroupedCount = await Issue.countDocuments({
+      parentIssueId: targetIncident._id,
+      status: { $ne: 'rejected' },
+    });
+    targetIncident.groupedReportsCount = currentGroupedCount;
+    await targetIncident.save();
+
+    // Audit log for target incident
+    await logAuditEvent({
+      entityType: 'issue',
+      entityId: targetIncident._id,
+      action: 'issue_grouped',
+      actor: req.user._id,
+      details: {
+        targetIncidentId: targetIncident._id,
+        targetTitle: targetIncident.title,
+        groupedChildIds: validChildIds,
+        childCount: validChildIds.length,
+      },
+      reason: trimmedReason,
+    });
+
+    // Audit log for each grouped child report
+    for (const child of children) {
+      await logAuditEvent({
+        entityType: 'issue',
+        entityId: child._id,
+        action: 'issue_grouped',
+        actor: req.user._id,
+        details: {
+          targetIncidentId: targetIncident._id,
+          targetTitle: targetIncident.title,
+        },
+        reason: trimmedReason,
+      });
+    }
+
+    // Notify child reporters
+    for (const child of children) {
+      if (child.createdBy && child.createdBy.toString() !== req.user._id.toString()) {
+        await createNotification({
+          recipient: child.createdBy,
+          actor: req.user._id,
+          issue: targetIncident._id,
+          type: 'issue_grouped',
+          title: 'Report Grouped into Campus Incident',
+          message: `Your report "${child.title}" has been grouped into the shared campus incident "${targetIncident.title}". All updates and resolution progress will be shared.`,
+        });
+      }
+    }
+
+    // Socket.IO notification if available
+    try {
+      const io = getIO();
+      if (io) {
+        io.emit('issue:grouped', {
+          targetIncidentId: targetIncident._id,
+          groupedChildIds: validChildIds,
+        });
+      }
+    } catch {
+      // non-blocking
+    }
+
+    const updatedTarget = await Issue.findById(targetIncident._id)
+      .populate('createdBy', 'name email department role')
+      .populate('department', 'name code isActive')
+      .populate('assignedTo', 'name email department');
+
+    res.status(200).json({
+      status: 'success',
+      message: `${validChildIds.length} report(s) successfully grouped into incident.`,
+      data: {
+        incident: updatedTarget.toObject(),
+        groupedCount: currentGroupedCount,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /api/admin/issues/:id/ungroup
+ * Remove an issue from its parent incident group
+ */
+export const ungroupIssue = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { reason = '' } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Invalid issue ID format.',
+      });
+    }
+
+    const issue = await Issue.findById(id);
+    if (!issue) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Issue report not found.',
+      });
+    }
+
+    if (!issue.parentIssueId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'This report is not part of any incident group.',
+      });
+    }
+
+    const parentId = issue.parentIssueId;
+    const trimmedReason = reason.trim() || 'Report unlinked from incident group by administrator';
+
+    issue.parentIssueId = null;
+    issue.groupingReason = '';
+    issue.groupedBy = null;
+    issue.groupedAt = null;
+    await issue.save();
+
+    // Recalculate parent incident group count
+    const remainingCount = await Issue.countDocuments({
+      parentIssueId: parentId,
+      status: { $ne: 'rejected' },
+    });
+
+    await Issue.findByIdAndUpdate(parentId, {
+      $set: {
+        groupedReportsCount: remainingCount,
+        isIncidentGroup: remainingCount > 0,
+      },
+    });
+
+    // Audit log
+    await logAuditEvent({
+      entityType: 'issue',
+      entityId: issue._id,
+      action: 'issue_ungrouped',
+      actor: req.user._id,
+      details: {
+        issueId: issue._id,
+        issueTitle: issue.title,
+        previousParentId: parentId,
+      },
+      reason: trimmedReason,
+    });
+
+    // Notify author
+    if (issue.createdBy && issue.createdBy.toString() !== req.user._id.toString()) {
+      await createNotification({
+        recipient: issue.createdBy,
+        actor: req.user._id,
+        issue: issue._id,
+        type: 'issue_ungrouped',
+        title: 'Report Unlinked from Group',
+        message: `Your report "${issue.title}" has been restored as an independent issue.`,
+      });
+    }
+
+    // Socket.IO notification if available
+    try {
+      const io = getIO();
+      if (io) {
+        io.emit('issue:ungrouped', {
+          issueId: issue._id,
+          previousParentId: parentId,
+        });
+      }
+    } catch {
+      // non-blocking
+    }
+
+    res.status(200).json({
+      status: 'success',
+      message: 'Report successfully restored as an independent issue.',
+      data: {
+        issue: issue.toObject(),
+        parentRemainingCount: remainingCount,
       },
     });
   } catch (error) {

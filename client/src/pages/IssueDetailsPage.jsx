@@ -21,6 +21,9 @@ import {
   UploadCloud,
   Maximize2,
   CornerDownRight,
+  Layers,
+  PlusCircle,
+  ArrowRight,
 } from 'lucide-react';
 import SeverityBadge from '../components/common/SeverityBadge.jsx';
 import StatusBadge from '../components/common/StatusBadge.jsx';
@@ -557,6 +560,30 @@ export default function IssueDetailsPage() {
         </div>
       </div>
 
+      {/* Linked Parent Incident Banner */}
+      {issue.parentIssue && (
+        <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-indigo-900 shadow-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Layers className="w-5 h-5 text-indigo-600 shrink-0" />
+            <div className="min-w-0">
+              <span className="font-semibold block text-indigo-950">
+                This report is part of a shared campus incident group
+              </span>
+              <p className="truncate text-slate-700">
+                Incident: "{issue.parentIssue.title}"
+              </p>
+            </div>
+          </div>
+          <Link
+            to={`/issues/${issue.parentIssue.id || issue.parentIssue._id}`}
+            className="self-start sm:self-center shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs transition-colors"
+          >
+            <span>View Incident Overview</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      )}
+
       {/* Official Campus Alert Callout Banner (if approved) */}
       {issue.isCampusWideAlert ? (
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-3">
@@ -798,6 +825,84 @@ export default function IssueDetailsPage() {
           )}
         </div>
       </div>
+
+      {/* Linked Student Reports Section for Shared Incident */}
+      {(issue.isIncidentGroup || (issue.linkedReports && issue.linkedReports.length > 0)) && (
+        <section className="bg-white rounded-xl border border-slate-200 shadow-xs p-6 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <Layers className="w-5 h-5 text-indigo-600" />
+              <h3 className="text-base font-bold text-slate-900">
+                Linked Student Reports ({issue.linkedReports?.length || 0})
+              </h3>
+            </div>
+            <Link
+              to={`/issues/new?incidentId=${issue.id || issue._id}`}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-xs transition-colors"
+            >
+              <PlusCircle className="w-3.5 h-3.5" />
+              <span>Add my report to this incident</span>
+            </Link>
+          </div>
+
+          <p className="text-xs text-slate-500 leading-relaxed">
+            These individual student reports describe the same underlying incident. All distinct reporter descriptions, locations, and photo evidence are preserved below:
+          </p>
+
+          {issue.linkedReports && issue.linkedReports.length > 0 ? (
+            <div className="space-y-3">
+              {issue.linkedReports.map((child) => (
+                <div
+                  key={child.id || child._id}
+                  className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-semibold text-slate-900">
+                      <span>{child.createdBy?.name || 'Student Reporter'}</span>
+                      <span className="text-slate-400 font-normal">•</span>
+                      <span className="text-slate-500 font-normal">
+                        {formatRelativeTime(child.createdAt)}
+                      </span>
+                      {child.visibility !== 'public' && (
+                        <span className="text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
+                          {child.visibility}
+                        </span>
+                      )}
+                    </div>
+                    <StatusBadge status={child.status} size="xs" />
+                  </div>
+                  <p className="text-slate-700 leading-relaxed font-normal">{child.description}</p>
+                  {(child.location?.building || child.location?.area || child.location?.room || child.location?.floor) && (
+                    <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                      <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                      <span>
+                        {[child.location.building, child.location.floor, child.location.room, child.location.area]
+                          .filter(Boolean)
+                          .join(' • ')}
+                      </span>
+                    </div>
+                  )}
+                  {child.imageUrl && (
+                    <div className="pt-1">
+                      <a href={child.imageUrl} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={child.imageUrl}
+                          alt="Report Evidence"
+                          className="w-20 h-20 object-cover rounded-lg border border-slate-200 hover:opacity-90"
+                        />
+                      </a>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-4 text-xs text-slate-400 bg-slate-50 rounded-lg">
+              No additional student reports linked yet.
+            </div>
+          )}
+        </section>
+      )}
 
       {/* Lifecycle Status & Chronological Audit Timeline */}
       <StatusHistoryTimeline

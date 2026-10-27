@@ -15,6 +15,8 @@ import {
   createStaffUser,
   updateStaffUser,
   getAuditLogs,
+  groupIssue,
+  ungroupIssue,
 } from '../controllers/adminController.js';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
 
@@ -28,6 +30,10 @@ router.get('/issues', getAdminIssues);
 router.get('/issues/:id', getAdminIssueById);
 router.patch('/issues/:id/review', reviewIssue);
 router.patch('/issues/:id/status', updateIssueStatus);
+
+// Smart Issue Grouping & Incident Operations
+router.post('/issues/:id/group', groupIssue);
+router.post('/issues/:id/ungroup', ungroupIssue);
 
 // Assignment, redirection and routing operations
 router.post('/issues/:id/assign', assignIssue);
